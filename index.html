@@ -109,6 +109,7 @@ import * as THREE from "./vendor/three.module.min.js";
    - 音はすべて master ゲインを通す（ミュートが効くように）。110Hz 未満は使わない（2D 版で重低音が耳障りと言われた） */
 const Sfx = (() => {
   let ac = null, master = null, verb = null, verbIn = null, noiseBuf = null, amb = null, foot = 0;
+  const flags = { furinSilent: false, noEcho: false };   // 音の異変（風鈴が鳴らない・足音が響かない）
   let muted = false;
   try { muted = localStorage.getItem("mochi-exit-3d:muted") === "1"; } catch (e) {}
   function impulse(sec, decay) {                     // 残響の素（左右で別のノイズ・前半に初期反射）
@@ -183,13 +184,13 @@ const Sfx = (() => {
   }
   function filt(type, f, q = 0.7) { const b = ac.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; }
   return {
-    ensure,
+    ensure, flags,
     // 石畳の足音（左右の足で定位と音色を変える）
     step() {
-      if (!ensure()) return; const t = ac.currentTime + 0.005, side = (foot ^= 1) ? -0.14 : 0.14, v = rnd(0.8, 1.15);
-      noiseHit(t, { f: rnd(1500, 2100), q: 1.1, attack: 0.0015, decay: rnd(0.035, 0.05), gain: 0.28 * v, hp: 300, wet: 0.22, pan: side });          // かかと
-      tone(t, rnd(150, 175), { decay: 0.045, gain: 0.07 * v, attack: 0.002, wet: 0.05, pan: side });                                                     // 体重の乗る鈍い音（110Hz より上）
-      noiseHit(t + rnd(0.07, 0.1), { f: rnd(2600, 3400), type: "lowpass", q: 0.5, attack: 0.006, decay: rnd(0.07, 0.11), gain: 0.07 * v, hp: 500, wet: 0.15, pan: side });   // つま先のこすれ
+      if (!ensure()) return; const t = ac.currentTime + 0.005, side = (foot ^= 1) ? -0.14 : 0.14, v = rnd(0.8, 1.15), e = flags.noEcho ? 0 : 1;
+      noiseHit(t, { f: rnd(1500, 2100), q: 1.1, attack: 0.0015, decay: rnd(0.035, 0.05), gain: 0.28 * v, hp: 300, wet: 0.22 * e, pan: side });          // かかと
+      tone(t, rnd(150, 175), { decay: 0.045, gain: 0.07 * v, attack: 0.002, wet: 0.05 * e, pan: side });                                                     // 体重の乗る鈍い音（110Hz より上）
+      noiseHit(t + rnd(0.07, 0.1), { f: rnd(2600, 3400), type: "lowpass", q: 0.5, attack: 0.006, decay: rnd(0.07, 0.11), gain: 0.07 * v, hp: 500, wet: 0.15 * e, pan: side });   // つま先のこすれ
     },
     // 正解: おりんの「ちーん」
     good() { if (!ensure()) return; const t = ac.currentTime + 0.02; bell(t, 742, [1, 2.71, 5.15], [0.6, 0.25, 0.08], 2.6, 0.13, { wet: 0.45 }); },
@@ -212,7 +213,7 @@ const Sfx = (() => {
       const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = 0.07; lg.gain.value = 260; lfo.connect(lg); lg.connect(windBp.frequency); lfo.start();
       const pans = chimes.map(([x, y, z]) => positional(x, y, z));
       amb = { room, wind, lfo, pans, timers: [] };
-      pans.forEach((p, k) => { const loop = () => { if (!amb) return; chime(p, 0.12); amb.timers[k] = setTimeout(loop, rnd(3500, 9000)); }; amb.timers[k] = setTimeout(loop, 800 + k * 2300); });
+      pans.forEach((p, k) => { const loop = () => { if (!amb) return; if (!flags.furinSilent) chime(p, 0.12); amb.timers[k] = setTimeout(loop, rnd(3500, 9000)); }; amb.timers[k] = setTimeout(loop, 800 + k * 2300); });
     },
     stopAmbience() {
       if (!amb) return; const a = amb; amb = null; a.timers.forEach(clearTimeout);
@@ -385,6 +386,12 @@ function sharedCanvases() {
       }
     });
   }));
+  // 異変用: 団子屋の品書きの木札が1枚だけ違う版（真ん中の札「三色」→「きなこ」）
+  CV.shopMenuAlt = canvasOf(1024, 1024, (ctx) => {
+    ctx.drawImage(CV.shop[3], 0, 0); const r = rng(77), x = 60 + 74;
+    grain(ctx, x, 120, 60, 300, r, [196, 160, 112], true); ctx.strokeStyle = "rgba(60,30,10,0.6)"; ctx.lineWidth = 3; ctx.strokeRect(x, 120, 60, 300);
+    ctx.save(); ctx.translate(x + 30, 150); ctx.textAlign = "center"; [..."きなこ"].forEach((ch, n) => jpText(ctx, ch, 0, 18 + n * 44, 40, "#2a1608")); ctx.restore();
+  });
   // 茶筒のラベル
   CV.teaLabel = canvasOf(256, 256, (ctx, w, h) => {
     const g = ctx.createLinearGradient(0, 0, w, 0); g.addColorStop(0, "#1e3a26"); g.addColorStop(0.5, "#4f7a58"); g.addColorStop(1, "#1e3a26");
@@ -581,6 +588,12 @@ function sharedCanvases() {
     draw(ctx, w, h, rng(61 + i));
     ctx.fillStyle = "rgba(255,255,255,0.05)"; ctx.fillRect(0, 0, w, h * 0.4);   // 表面のつや（上からの照り返し）
   }));
+  // 異変用: 三色だんごのポスターの値段だけ違う版
+  CV.posterPrice = canvasOf(1024, 1536, (ctx, w) => {
+    ctx.drawImage(CV.posters[0], 0, 0);
+    star(ctx, w - 190, 1060, 175, 140, 18, "#ffd23f"); ctx.textAlign = "center"; ctx.fillStyle = "#3a1408";
+    ctx.font = `900 46px ${GOTHIC}`; ctx.fillText("一本", w - 190, 1010); ctx.font = `900 92px ${GOTHIC}`; ctx.fillText("150円", w - 190, 1095); ctx.font = `700 30px ${GOTHIC}`; ctx.fillText("（税込）", w - 190, 1140);
+  });
   // 看板「もち屋」
   CV.shopSign = canvasOf(512, 160, (ctx, w, h) => {
     const r = rng(53); grain(ctx, 0, 0, w, h, r, [70, 40, 20], false);
@@ -620,7 +633,7 @@ function furin(g, [x, y, z], k) {
   grp.add(glass);
   const paint = new THREE.Mesh(new THREE.SphereGeometry(0.056, 20, 6, 0, Math.PI * 2, Math.PI * 0.32, Math.PI * 0.12), col(k ? 0x2a6fd6 : 0xd8342c, { roughness: 0.3 })); grp.add(paint);   // 金魚・波を思わせる色の帯
   grp.add(box(0.003, 0.09, 0.003, col(0xdddddd), 0, -0.05, 0));                                                    // 舌をつるす糸
-  const tan = new THREE.Mesh(new THREE.PlaneGeometry(0.045, 0.17), col(k ? 0xf2d14a : 0xf08aa8, { roughness: 0.9, side: THREE.DoubleSide })); tan.position.y = -0.18; grp.add(tan);   // 短冊
+  const tan = new THREE.Mesh(new THREE.PlaneGeometry(0.065, 0.24), col(k ? 0xf2d14a : 0xf08aa8, { roughness: 0.9, side: THREE.DoubleSide })); tan.position.y = -0.21; grp.add(tan);   // 短冊
   grp.add(box(0.003, 0.14, 0.003, col(0xdddddd), 0, 0.12, 0));
   g.add(grp); return grp;
 }
@@ -629,40 +642,42 @@ function furin(g, [x, y, z], k) {
 // 0=木の箱台＋赤い毛氈 1=ガラスのショーケース 2=赤い布を掛けた縁台＋かご 3=2段のひな壇 4=樽の上に板を渡した台
 const COUNTER_STYLE = [0, 1, 2, 3, 4, 1, 3, 0, 4, 2];
 function counter(g, style, i, x, z, wB) {
+  const cg = new THREE.Group(), items = []; g.add(cg);
   const W = wB - 0.6, wood = (c, ry = 0.5) => std(texOf(sharedCanvases().wood, 1, ry), { roughness: 0.5, color: c });
   const felt = col(0xa8261f, { roughness: 0.95 });
-  const place = (y, xs, dzs) => dzs.forEach((dz, k) => { const it = goods(i % 4, k); it.position.set(xs[k] ?? xs[0], y, z + dz); g.add(it); });
+  const place = (y, xs, dzs) => dzs.forEach((dz, k) => { const it = goods(i % 4, k); it.position.set(xs[k] ?? xs[0], y, z + dz); cg.add(it); items.push(it); });
   if (style === 0) {
-    g.add(box(0.5, 0.85, W, wood(0xb08060), x, 0.425, z), box(0.44, 0.006, W - 0.1, felt, x, 0.853, z));
+    cg.add(box(0.5, 0.85, W, wood(0xb08060), x, 0.425, z), box(0.44, 0.006, W - 0.1, felt, x, 0.853, z));
     place(0.856, [x], [-0.45, 0.45]);
   } else if (style === 1) {
-    g.add(box(0.52, 0.62, W, wood(0x6e4426), x, 0.31, z));
-    g.add(box(0.5, 0.02, W - 0.02, col(0xf2ece0, { roughness: 0.6 }), x, 0.63, z));
+    cg.add(box(0.52, 0.62, W, wood(0x6e4426), x, 0.31, z));
+    cg.add(box(0.5, 0.02, W - 0.02, col(0xf2ece0, { roughness: 0.6 }), x, 0.63, z));
     const glass = new THREE.MeshStandardMaterial({ color: 0xdff2f7, roughness: 0.05, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide });
-    g.add(box(0.5, 0.34, W - 0.02, glass, x, 0.81, z));
+    cg.add(box(0.5, 0.34, W - 0.02, glass, x, 0.81, z));
     const frame = col(0x3a2414, { roughness: 0.4 });
-    [[0.25, 0.81, W / 2], [-0.25, 0.81, W / 2], [0.25, 0.81, -W / 2], [-0.25, 0.81, -W / 2]].forEach(([dx, y, dz]) => g.add(box(0.025, 0.36, 0.025, frame, x + dx, y, z + dz)));
-    g.add(box(0.52, 0.025, W, frame, x, 0.985, z));
+    [[0.25, 0.81, W / 2], [-0.25, 0.81, W / 2], [0.25, 0.81, -W / 2], [-0.25, 0.81, -W / 2]].forEach(([dx, y, dz]) => cg.add(box(0.025, 0.36, 0.025, frame, x + dx, y, z + dz)));
+    cg.add(box(0.52, 0.025, W, frame, x, 0.985, z));
     place(0.64, [x], [-0.4, 0.4]);
   } else if (style === 2) {
-    g.add(box(0.7, 0.42, W + 0.1, wood(0x9a6a44), x - 0.05, 0.21, z));
-    g.add(box(0.72, 0.012, W + 0.14, felt, x - 0.05, 0.426, z), box(0.012, 0.3, W + 0.14, felt, x + 0.31, 0.29, z));   // 前に垂らした布
+    cg.add(box(0.7, 0.42, W + 0.1, wood(0x9a6a44), x - 0.05, 0.21, z));
+    cg.add(box(0.72, 0.012, W + 0.14, felt, x - 0.05, 0.426, z), box(0.012, 0.3, W + 0.14, felt, x + 0.31, 0.29, z));   // 前に垂らした布
     const basket = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.12, 24, 1, true), col(0xc29a5a, { roughness: 0.9, side: THREE.DoubleSide }));
-    basket.position.set(x - 0.1, 0.49, z + 0.45); g.add(basket);
+    basket.position.set(x - 0.1, 0.49, z + 0.45); cg.add(basket);
     place(0.432, [x - 0.1], [-0.45]);
-    const it = goods(i % 4, 1); it.position.set(x - 0.1, 0.44, z + 0.45); it.scale.setScalar(0.8); g.add(it);
+    const it = goods(i % 4, 1); it.position.set(x - 0.1, 0.44, z + 0.45); it.scale.setScalar(0.8); cg.add(it); items.push(it);
   } else if (style === 3) {
-    g.add(box(0.5, 0.55, W, wood(0xa87a54), x, 0.275, z), box(0.24, 0.32, W, wood(0x8a5e3c), x - 0.13, 0.71, z));
-    g.add(box(0.26, 0.006, W - 0.1, felt, x + 0.12, 0.553, z), box(0.22, 0.006, W - 0.1, felt, x - 0.13, 0.873, z));
+    cg.add(box(0.5, 0.55, W, wood(0xa87a54), x, 0.275, z), box(0.24, 0.32, W, wood(0x8a5e3c), x - 0.13, 0.71, z));
+    cg.add(box(0.26, 0.006, W - 0.1, felt, x + 0.12, 0.553, z), box(0.22, 0.006, W - 0.1, felt, x - 0.13, 0.873, z));
     place(0.556, [x + 0.12], [-0.45]); place(0.876, [x - 0.13], [0.45]);
   } else {
     [-0.55, 0.55].forEach((dz) => {
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.19, 0.74, 20), wood(0x9a6c40, 1)); barrel.position.set(x, 0.37, z + dz); g.add(barrel);
-      [0.12, 0.62].forEach((y) => { const hoop = new THREE.Mesh(new THREE.CylinderGeometry(0.215, 0.205, 0.03, 20), col(0x2a2622, { roughness: 0.4, metalness: 0.6 })); hoop.position.set(x, y, z + dz); g.add(hoop); });
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.19, 0.74, 20), wood(0x9a6c40, 1)); barrel.position.set(x, 0.37, z + dz); cg.add(barrel);
+      [0.12, 0.62].forEach((y) => { const hoop = new THREE.Mesh(new THREE.CylinderGeometry(0.215, 0.205, 0.03, 20), col(0x2a2622, { roughness: 0.4, metalness: 0.6 })); hoop.position.set(x, y, z + dz); cg.add(hoop); });
     });
-    g.add(box(0.5, 0.05, W + 0.2, wood(0xc49a6a), x, 0.765, z));
+    cg.add(box(0.5, 0.05, W + 0.2, wood(0xc49a6a), x, 0.765, z));
     place(0.79, [x], [-0.45, 0.45]);
   }
+  return { group: cg, goods: items };
 }
 
 // 売り台の商品（お店の種類 type: 0=もち 1=茶 2=飴 3=団子、k: 左右どちらの品か）。数は少なく、形と質感で本物らしく
@@ -672,9 +687,9 @@ function goods(type, k) {
   const sph = (r, color, x, y, z, sy = 1, rough = 0.6) => { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), col(color, { roughness: rough })); m.scale.y = sy; m.position.set(x, y, z); grp.add(m); return m; };
   if (type === 3 || (type === 0 && k)) {               // 三色団子（団子屋・もち屋の片側）
     grp.add(box(0.2, 0.012, 0.34, lacquer, 0, 0.006, 0));
-    [-0.09, 0, 0.09].forEach((dz) => {
+    grp.userData.skewers = [-0.09, 0, 0.09].map((dz) => {
       const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.17, 6), col(0xd9c08a)); stick.rotation.z = Math.PI / 2; stick.position.set(0, 0.035, dz); grp.add(stick);
-      [0xf2a7b8, 0xf7f3ea, 0x8fbf6a].forEach((c, n) => sph(0.026, c, -0.05 + n * 0.05, 0.036, dz, 0.95, 0.75));
+      return [stick, ...[0xf2a7b8, 0xf7f3ea, 0x8fbf6a].map((c, n) => sph(0.026, c, -0.05 + n * 0.05, 0.036, dz, 0.95, 0.75))];
     });
   } else if (type === 0) {                             // 大福（白と薄桃）
     const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.016, 28), lacquer); plate.position.y = 0.008; grp.add(plate);
@@ -725,7 +740,7 @@ function buildHall(signNum) {
     [-1, 1].forEach((sg) => { const b = box(0.08, Math.hypot(W2 * 0.5, RIDGE_H - EAVE_H), 0.08, timberX, sg * W2 * 0.25, (EAVE_H + RIDGE_H) / 2 - 0.05, z); b.rotation.z = sg * Math.atan2(W2 * 0.5, RIDGE_H - EAVE_H); g.add(b); });
   }
   // 高窓（左右・壁の上から軒まで）
-  const skyMat = new THREE.MeshBasicMaterial({ map: texOf(C.sky, LL / 4, 1), fog: false });
+  const skyMat = new THREE.MeshBasicMaterial({ map: texOf(C.sky, LL / 4, 1), fog: false }); s.skyMat = skyMat;
   [[-W2 + 0.01, Math.PI / 2], [W2 - 0.01, -Math.PI / 2]].forEach(([x, ry]) => g.add(plane(LL, EAVE_H - WALL_H - 0.12, skyMat, x, (WALL_H + EAVE_H - 0.12) / 2, 0, ry)));
 
   // 右側: 漆喰の壁＋腰板＋巾木
@@ -747,21 +762,23 @@ function buildHall(signNum) {
 
   // 左側: お店（区画ごとに 奥の棚・売り台・のれん・瓦の庇）
   const back = -W2 - 1.1;
+  s.shops = [];
   BAYS.forEach((z, i) => {
-    const wB = BAY - 0.18;
+    const wB = BAY - 0.18, shop = { z, noren: [] }; s.shops.push(shop);
     const shopTex = texOf(C.shop[i % 4]);
-    g.add(plane(wB, WALL_H, new THREE.MeshStandardMaterial({ map: shopTex, emissiveMap: shopTex, emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.9 }), back, WALL_H / 2, z, Math.PI / 2));
+    shop.backMat = new THREE.MeshStandardMaterial({ map: shopTex, emissiveMap: shopTex, emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.9 });
+    g.add(plane(wB, WALL_H, shop.backMat, back, WALL_H / 2, z, Math.PI / 2));
     g.add(plane(1.1, wB, std(texOf(C.wood, 0.55, 1.2), { roughness: 0.7, color: 0x8a6a50 }), -W2 - 0.55, 0.004, z, 0, -Math.PI / 2));   // お店の床
     [z - wB / 2, z + wB / 2].forEach((zz, k) => g.add(plane(1.1, WALL_H, std(texOf(C.wood, 0.55, 1.4), { roughness: 0.7, color: 0x9a7458 }), -W2 - 0.55, WALL_H / 2, zz, k ? Math.PI : 0)));
     g.add(plane(1.1, wB, std(texOf(C.plank, 0.55, 1.3), { roughness: 0.8 }), -W2 - 0.55, WALL_H - 0.3, z, 0, Math.PI / 2));             // お店の天井
     g.add(box(0.06, 0.3, wB, std(texOf(C.wood, 1, 0.3)), -W2 + 0.03, WALL_H - 0.15, z));                                                 // 上の鴨居
     // 売り台と商品
-    counter(g, COUNTER_STYLE[i % COUNTER_STYLE.length], i, -W2 - 0.4, z, wB);
+    const cnt = counter(g, COUNTER_STYLE[i % COUNTER_STYLE.length], i, -W2 - 0.4, z, wB); shop.counter = cnt.group; shop.goods = cnt.goods;
     // のれん: 3枚に割れた布。お店ごとに長さ・藍の濃さ・揺れ方を変え、しわ（波打ち）で光の当たり方に濃淡を出す
     {
       const nr = rng(100 + i), nh = 0.46 + nr() * 0.26, top = WALL_H - 0.27, tot = wB - 0.3, gap = 0.012, pw = (tot - 2 * gap) / 3;
       const nMat = new THREE.MeshStandardMaterial({ map: texOf(C.noren[i % 4]), roughness: 0.95, side: THREE.DoubleSide, color: new THREE.Color().setHSL(0.6, 0.12 * nr(), 0.78 + nr() * 0.22) });
-      const swing = (nr() - 0.5) * 0.05;
+      const swing = (nr() - 0.5) * 0.05; shop.norenMat = nMat; shop.nh = nh; shop.top = top;
       for (let k = 0; k < 3; k++) {
         const geo = new THREE.PlaneGeometry(pw, nh, 12, 6), pos = geo.attributes.position, uv = geo.attributes.uv, ph = nr() * 6;
         for (let v = 0; v < pos.count; v++) {
@@ -772,9 +789,9 @@ function buildHall(signNum) {
         }
         geo.computeVertexNormals();
         const m = new THREE.Mesh(geo, nMat); m.rotation.y = Math.PI / 2;
-        m.position.set(-W2 + 0.07, top - nh / 2, z + tot / 2 - pw / 2 - k * (pw + gap)); g.add(m);
+        m.position.set(-W2 + 0.07, top - nh / 2, z + tot / 2 - pw / 2 - k * (pw + gap)); g.add(m); shop.noren.push(m);
       }
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, tot + 0.1, 8), col(0xb89a5a, { roughness: 0.5 })); pole.rotation.x = Math.PI / 2; pole.position.set(-W2 + 0.07, top + 0.01, z); g.add(pole);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, tot + 0.1, 8), col(0xb89a5a, { roughness: 0.5 })); pole.rotation.x = Math.PI / 2; pole.position.set(-W2 + 0.07, top + 0.01, z); g.add(pole); shop.pole = pole;
     }
     // 瓦の庇
     // 板の向き: 横（u）が通路に沿い、縦（v）が軒先へ下がる。上面は瓦・下面は木の軒裏
@@ -797,13 +814,13 @@ function buildHall(signNum) {
     g.add(pivot); s.posters.push(pivot);
   });
   // 扉（右の壁・枠＋鏡板＋真鍮の取っ手。蝶番で回る）
-  s.doors = [];
+  s.doors = []; s.doorKnobs = [];
   [BAYS[2], BAYS[6]].forEach((z) => {
     g.add(box(0.07, 2.25, 1.16, dark, W2 - 0.035, 1.125, z));
     const hinge = new THREE.Group(); hinge.position.set(W2 - 0.08, 0, z + 0.45); hinge.rotation.y = Math.PI;
     hinge.add(box(0.05, 2.1, 0.9, std(texOf(C.wood, 0.5, 2.2), { roughness: 0.45, color: 0xd08a5e }), 0, 1.05, 0.45));
     [0.62, 1.5].forEach((y) => hinge.add(box(0.02, 0.62, 0.62, col(0x7a3a1c, { roughness: 0.4 }), 0.03, y, 0.45)));
-    hinge.add(box(0.06, 0.14, 0.05, new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.25, metalness: 0.9 }), 0.04, 1.0, 0.8));
+    const knob = box(0.06, 0.16, 0.05, new THREE.MeshStandardMaterial({ color: 0xe8b84a, roughness: 0.3, metalness: 0.35 }), 0.04, 1.0, 0.8); hinge.add(knob); s.doorKnobs.push(knob);   // 金属感を強くすると環境の映り込みが無いので真っ黒に見える
     g.add(hinge); s.doors.push(hinge);
   });
 
@@ -820,7 +837,7 @@ function buildHall(signNum) {
 
   // 提灯（庇の前・和紙の質感で自分で光る）
   s.lanterns = [];
-  const lanternMat = new THREE.MeshBasicMaterial({ map: texOf(C.lantern) });
+  const lanternMat = new THREE.MeshBasicMaterial({ map: texOf(C.lantern) }); s.lanternMat = lanternMat;
   function lantern(z) {
     const grp = new THREE.Group(); grp.position.set(-W2 + 0.55, WALL_H - 0.45, z);
     const body = new THREE.Mesh(new THREE.SphereGeometry(0.2, 24, 16), lanternMat); body.scale.y = 1.25; grp.add(body);
@@ -836,6 +853,17 @@ function buildHall(signNum) {
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 32, 24), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 })); body.scale.y = 0.85; body.position.y = 0.3; s.mochi.add(body);
   s.mochi.add(box(0.05, 0.09, 0.02, col(0x222222), -0.1, 0.38, 0.31), box(0.05, 0.09, 0.02, col(0x222222), 0.1, 0.38, 0.31), box(0.1, 0.03, 0.02, col(0xd44444), 0, 0.27, 0.32));
   s.mochi.position.set(0.9, 0, -6.5); s.mochi.visible = false; g.add(s.mochi);
+  s.mochi2 = s.mochi.clone(); s.mochi2.position.set(-0.8, 0, -2.6); s.mochi2.rotation.y = 0.5; s.mochi2.visible = false; g.add(s.mochi2);
+  // 異変用に普段は隠しておく物: 水たまり・通路の真ん中の樽・余分な柱・色違いの石（石は石畳の目地にぴったり合う位置）
+  s.puddle = new THREE.Mesh(new THREE.CircleGeometry(0.8, 40), new THREE.MeshStandardMaterial({ color: 0x2a2420, roughness: 0.04, metalness: 0.3, transparent: true, opacity: 0.72 }));
+  s.puddle.rotation.x = -Math.PI / 2; s.puddle.scale.set(1.3, 0.8, 1); s.puddle.position.set(0.3, 0.006, -2); s.puddle.visible = false; g.add(s.puddle);
+  s.barrel = new THREE.Group();
+  const bw = std(texOf(C.wood, 1, 1), { roughness: 0.5, color: 0x9a6c40 }), bb = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.3, 0.9, 24), bw); bb.position.y = 0.45; s.barrel.add(bb);
+  [0.12, 0.78].forEach((y) => { const hp = new THREE.Mesh(new THREE.CylinderGeometry(0.345, 0.335, 0.04, 24), col(0x2a2622, { roughness: 0.4, metalness: 0.6 })); hp.position.y = y; s.barrel.add(hp); });
+  s.barrel.position.set(-0.35, 0, -4.6); s.barrel.visible = false; g.add(s.barrel);
+  s.extraPillar = box(0.18, EAVE_H, 0.18, timberZ, W2 - 0.09, EAVE_H / 2, BAYS[3]); s.extraPillar.visible = false; g.add(s.extraPillar);
+  s.oddStone = plane(0.98, 0.48, std(texOf(C.stone, 0.49, 0.24), { roughness: 0.55, color: 0x9c8c78 }), 0, 0.003, 4.15, 0, -Math.PI / 2); s.oddStone.visible = false; g.add(s.oddStone);
+  s.furinSilent = false; s.noEcho = false;   // 音の異変（Sfx が見る）
 
   // 出口サイン（梁から吊る・前後から読める）
   s.signMat = new THREE.MeshBasicMaterial({ color: 0xf0f0f0 });
@@ -849,15 +877,41 @@ function buildHall(signNum) {
 }
 
 /* ===== 5. 異変（level 1=わかりやすい / 3=微妙）。apply は s の部品を書き換えるだけ ===== */
+// 30種（level 1: 9 / 2: 10 / 3: 11。2D 版と同じ配分）。お店の番号は BAYS の順（0=入口の背後, 1=9.1m, 2=6.5m, 3=3.9m … 9=出口側）
 const ANOMALIES = [
-  { id: "mochi_in_hall",  level: 1, desc: "通路にもちが立っていた",       apply: (s) => { s.mochi.visible = true; } },
-  { id: "light_dead",     level: 1, desc: "吊り下げ灯が1つ消えていた",     apply: (s) => { s.panels[2].material.color.set(0x222222); s.lights[2].intensity = 0; s.lights[1].intensity = 3; s.lights[3].intensity = 3; } },
-  { id: "door_open",      level: 1, desc: "扉が開いていた",               apply: (s) => { s.doors[0].rotation.y = Math.PI + 1.25; } },
-  { id: "poster_gone",    level: 2, desc: "ポスターが1枚なくなっていた",   apply: (s) => { s.posters[0].visible = false; } },
-  { id: "extra_lantern",  level: 2, desc: "提灯が1つ増えていた",           apply: (s) => { s.extraLantern.visible = true; } },
-  { id: "wall_red",       level: 2, desc: "右の壁が少し赤かった",           apply: (s) => { s.wallR.material.color.set(0xe89a86); } },
-  { id: "poster_flipped", level: 3, desc: "ポスターが逆さだった",           apply: (s) => { s.posters[0].children[1].rotation.z = Math.PI; } },
-  { id: "sign_wrong_num", level: 3, desc: "出口の番号がずれていた",         apply: (s) => { s.setSign(s.signNum + 1 > 8 ? 7 : s.signNum + 1); } },
+  // ●○○ わかりやすい
+  { id: "mochi_in_hall",   level: 1, desc: "通路にもちが立っていた",           apply: (s) => { s.mochi.visible = true; } },
+  { id: "light_dead",      level: 1, desc: "吊り下げ灯が1つ消えていた",         apply: (s) => { s.panels[2].material.color.set(0x222222); s.lights[2].intensity = 0; s.lights[1].intensity = 3; s.lights[3].intensity = 3; } },
+  { id: "door_open",       level: 1, desc: "扉が開いていた",                   apply: (s) => { s.doors[0].rotation.y = Math.PI + 1.25; } },
+  { id: "noren_gone",      level: 1, desc: "のれんが全部はずされていた",       apply: (s) => { s.shops.forEach((sh) => { sh.noren.forEach((m) => { m.visible = false; }); sh.pole.visible = false; }); } },
+  { id: "counter_gone",    level: 1, desc: "団子屋の売り台がなくなっていた",   apply: (s) => { s.shops[3].counter.visible = false; } },
+  { id: "puddle",          level: 1, desc: "通路に水たまりがあった",           apply: (s) => { s.puddle.visible = true; } },
+  { id: "barrel_center",   level: 1, desc: "通路の真ん中に樽が置かれていた",   apply: (s) => { s.barrel.visible = true; } },
+  { id: "two_mochi",       level: 1, desc: "もちが2匹いた",                    apply: (s) => { s.mochi.visible = true; s.mochi2.visible = true; } },
+  { id: "lanterns_red",    level: 1, desc: "提灯が全部まっ赤に灯っていた",     apply: (s) => { s.lanternMat.color.set(0xff2a2a); } },
+  // ●●○ ふつう
+  { id: "poster_gone",     level: 2, desc: "ポスターが1枚なくなっていた",       apply: (s) => { s.posters[0].visible = false; } },
+  { id: "extra_lantern",   level: 2, desc: "提灯が1つ増えていた",               apply: (s) => { s.extraLantern.visible = true; } },
+  { id: "wall_red",        level: 2, desc: "右の壁が少し赤かった",               apply: (s) => { s.wallR.material.color.set(0xe89a86); } },
+  { id: "noren_swap",      level: 2, desc: "飴屋ののれんが「団子」になっていた", apply: (s) => { s.shops[2].norenMat.map = texOf(sharedCanvases().noren[3]); s.shops[2].norenMat.needsUpdate = true; } },
+  { id: "showcase_empty",  level: 2, desc: "茶屋のショーケースが空だった",       apply: (s) => { s.shops[1].goods.forEach((it) => { it.visible = false; }); } },
+  { id: "furin_silent",    level: 2, desc: "風鈴が鳴らなかった",                 apply: (s) => { s.furinSilent = true; } },
+  { id: "sky_night",       level: 2, desc: "高窓の空が夜になっていた",           apply: (s) => { s.skyMat.color.set(0x2a3060); } },
+  { id: "poster_swap",     level: 2, desc: "ポスターが同じ絵になっていた",       apply: (s) => { s.posters[1].children[1].material.map = texOf(sharedCanvases().posters[2]); s.posters[1].children[1].material.needsUpdate = true; } },
+  { id: "shop_dark",       level: 2, desc: "お店の奥の明かりが消えていた",       apply: (s) => { s.shops[4].backMat.emissiveIntensity = 0.04; s.shops[4].backMat.color.set(0x505050); } },
+  { id: "extra_pillar",    level: 2, desc: "右側の柱が1本多かった",             apply: (s) => { s.extraPillar.visible = true; } },
+  // ●●● 気づきにくい
+  { id: "poster_flipped",  level: 3, desc: "ポスターが逆さだった",               apply: (s) => { s.posters[0].children[1].rotation.z = Math.PI; } },
+  { id: "sign_wrong_num",  level: 3, desc: "出口の番号がずれていた",             apply: (s) => { s.setSign(s.signNum + 1 > 8 ? 7 : s.signNum + 1); } },
+  { id: "noren_short",     level: 3, desc: "のれんが1枚だけ短かった",           apply: (s) => { const sh = s.shops[3], m = sh.noren[1]; m.scale.y = 0.55; m.position.y = sh.top - sh.nh * 0.55 / 2; } },
+  { id: "dango_missing",   level: 3, desc: "団子が1串足りなかった",             apply: (s) => { const it = s.shops[3].goods.find((g) => g.userData.skewers); it.userData.skewers[1].forEach((m) => { m.visible = false; }); } },
+  { id: "menu_text",       level: 3, desc: "品書きの札が1枚ちがっていた",       apply: (s) => { const t = texOf(sharedCanvases().shopMenuAlt); s.shops[7].backMat.map = t; s.shops[7].backMat.emissiveMap = t; s.shops[7].backMat.needsUpdate = true; } },
+  { id: "door_knob",       level: 3, desc: "扉の取っ手が反対側にあった",         apply: (s) => { s.doorKnobs[1].position.z = 0.1; } },
+  { id: "poster_price",    level: 3, desc: "だんごの値段がちがっていた",         apply: (s) => { s.posters[0].children[1].material.map = texOf(sharedCanvases().posterPrice); s.posters[0].children[1].material.needsUpdate = true; } },
+  { id: "no_echo",         level: 3, desc: "足音が響かなかった",                 apply: (s) => { s.noEcho = true; } },
+  { id: "tanzaku_color",   level: 3, desc: "風鈴の短冊の色がちがっていた",       apply: (s) => { s.furin[0].children[3].material.color.set(0x6fc3ff); } },
+  { id: "lamp_blue",       level: 3, desc: "吊り下げ灯の色が青白かった",         apply: (s) => { s.panels.forEach((p) => p.material.color.set(0xdbe8ff)); s.lights.forEach((L) => L.color.set(0xcfe0ff)); } },
+  { id: "stone_color",     level: 3, desc: "石畳の石が1枚だけ色ちがいだった",   apply: (s) => { s.oddStone.visible = true; } },
 ];
 
 /* ===== 6. ゲーム状態 ===== */
@@ -888,7 +942,7 @@ function makeScene(signNum, anomaly) {
   if (anomaly) anomaly.apply(s);
   return s;
 }
-function setScene(s) { disposeScene(G.cur); G.cur = s; Quality.skip = 0.6; }
+function setScene(s) { disposeScene(G.cur); G.cur = s; Quality.skip = 0.6; Sfx.flags.furinSilent = s.furinSilent; Sfx.flags.noEcho = s.noEcho; }
 function resetPlayer() { P.x = 0; P.z = SPAWN_Z; P.yaw = 0; P.pitch = 0; }
 
 // 記録: 自己ベスト（タイム最速）と、見つけた異変（図鑑）。どちらも localStorage（使えない環境では記録しないだけで遊べる）
@@ -946,7 +1000,10 @@ function showResult(ms) {
   show("result");
 }
 // 図鑑: 見つけた異変は、その場面の画像と説明を出す。未発見は「？？？」と難しさの●だけ（答えを先に教えない）
-const ZUKAN_VIEW = { mochi_in_hall: [-3, 0], light_dead: [3, 0], door_open: [9.2, -0.45], poster_gone: [11.6, -0.5], extra_lantern: [-1.2, 0.45], wall_red: [3, -0.6], poster_flipped: [11.6, -0.5], sign_wrong_num: [-5.2, 0] };
+const ZUKAN_VIEW = { mochi_in_hall: [-3, 0], light_dead: [3, 0], door_open: [9.2, -0.45], poster_gone: [11.6, -0.5], extra_lantern: [-1.2, 0.45], wall_red: [3, -0.6], poster_flipped: [11.6, -0.5], sign_wrong_num: [-5.2, 0],
+  noren_gone: [8, 0.5], counter_gone: [6.2, 0.9], puddle: [1.5, 0], barrel_center: [-1.5, 0], two_mochi: [0.8, 0], lanterns_red: [8.5, 0.35],
+  noren_swap: [8.8, 0.9], showcase_empty: [11.2, 0.9], furin_silent: [6.0, 0.6], sky_night: [3, 0.5], poster_swap: [3.8, -0.8], shop_dark: [3.4, 0.9], extra_pillar: [6.5, -0.45],
+  noren_short: [5.6, 0.9], dango_missing: [5.2, 1.1], menu_text: [-4.8, 1.0], door_knob: [-2.2, -0.8], poster_price: [11.6, -0.5], no_echo: [SPAWN_Z, 0], tanzaku_color: [6.0, 0.6], lamp_blue: [3, 0], stone_color: [6.4, 0] };
 const zThumb = {};
 function thumbOf(id) {
   if (zThumb[id]) return zThumb[id];
@@ -1043,7 +1100,7 @@ muteBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); Sfx.ensure
 /* ===== 10. テストフック ===== */
 window.__exit3d = {
   anomalies: ANOMALIES.map((a) => ({ id: a.id, level: a.level, desc: a.desc })),
-  store: Store, showResult, openZukan, ambient: () => Sfx.ambient,
+  store: Store, showResult, openZukan, ambient: () => Sfx.ambient, zukanView: ZUKAN_VIEW,
   info: () => ({ textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries, programs: renderer.info.programs ? renderer.info.programs.length : 0, calls: renderer.info.render.calls }),
   startGame, debugState: () => ({ pr: Quality.pr, fps: Quality.fps, phase: G.phase, exitNo: G.exitNo, round: G.round, anomaly: G.anomaly && G.anomaly.id, final: !!G.final, x: P.x, z: P.z, yaw: P.yaw }),
   forceAnomaly: (id) => { G.forced = id; },
