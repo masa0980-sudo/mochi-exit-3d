@@ -41,6 +41,23 @@ canvas#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
 #modal{position:absolute;inset:0;background:#000b;display:none;align-items:center;justify-content:center;padding:20px;z-index:5}
 #modal.open{display:flex}
 #modal .card{background:#2a1c14;border-radius:18px;padding:22px;max-width:420px;line-height:1.8;font-size:15px;text-align:left}
+#modal .card .btn{margin:6px 6px 0 0}
+#resultInfo{background:#0008;border-radius:16px;padding:14px 22px;min-width:260px;line-height:1.9;font-size:17px}
+#resultInfo .new{display:inline-block;margin-left:8px;padding:0 10px;border-radius:999px;background:#ffb000;color:#2b1608;font-weight:900;font-size:14px}
+#resultInfo small{opacity:.8}
+#zukan{position:absolute;inset:0;background:#0d0907f2;display:none;z-index:6;overflow:auto;padding:max(14px,env(safe-area-inset-top)) 12px 20px}
+#zukan.open{display:block}
+.zwrap{max-width:860px;margin:0 auto}
+.zhead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-bottom:12px;font-size:20px}
+.zhead b,.zhead span{white-space:nowrap}
+.zhead span{opacity:.85;font-size:15px}
+.zhead .btn{margin-left:auto}
+#zGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.zc{background:#2a1c14;border-radius:14px;overflow:hidden;font-size:14px}
+.zc img,.zc .zq{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;background:#120d0a}
+.zc .zq{display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:900;color:#5a4636}
+.zc p{margin:0;padding:8px 10px 10px;line-height:1.5}
+.zc .lv{color:#ffb36b;letter-spacing:2px;font-size:12px}
 </style>
 </head>
 <body>
@@ -63,6 +80,7 @@ canvas#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
     <h2>脱出成功！</h2>
     <div id="resultInfo"></div>
     <button class="btn" id="againBtn">もういちど</button>
+    <button class="btn sub" id="zukanBtn">見つけた異変</button>
   </div>
   <div id="fade"></div>
   <div id="modal"><div class="card">
@@ -71,40 +89,144 @@ canvas#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
     ・異変を見つけたら<b>引き返す</b>。何もなければ<b>そのまま奥へ進む</b>。<br>
     ・正解すると出口の番号が1つ増え、<b>8</b>になれば脱出。まちがえると<b>0</b>に戻ります。<br>
     ・操作: パソコンは WASD／矢印＋マウス。スマホは左で歩く・右で見回す。<br><br>
+    <button class="btn sub" id="howZukan">見つけた異変を見る</button>
     <button class="btn sub" id="closeHow">とじる</button>
+  </div></div>
+  <div id="zukan"><div class="zwrap">
+    <div class="zhead"><b>見つけた異変</b><span id="zCount"></span><button class="btn sub" id="zClose">とじる</button></div>
+    <div id="zGrid"></div>
   </div></div>
 </div>
 <script type="module">
 import * as THREE from "./vendor/three.module.min.js";
 
-/* ===== 1. Sfx（master ゲインを必ず通す。110Hz未満・打楽器は使わない） ===== */
+/* ===== 1. Sfx（効果音・環境音。すべて合成で、音源ファイルは使わない） =====
+   本物らしさのための作り:
+   - 響き: 木造アーケードの残響（1.6秒の減衰ノイズを畳み込み）。足音・風鈴・判定音を少しずつ送る
+   - 足音: 石畳の「かかと（硬い短い音）→ つま先のこすれ → 余韻」を毎歩少しずつ変え、左右の足で定位をずらす
+   - 環境音: 夕暮れの空気（低めの帯域ノイズ）＋高窓のすきま風（ゆっくり揺れる帯域）
+   - 風鈴: お店の軒先に2つ。立体音響（HRTF）で、近づくと大きく・向きで左右が変わる
+   - 音はすべて master ゲインを通す（ミュートが効くように）。110Hz 未満は使わない（2D 版で重低音が耳障りと言われた） */
 const Sfx = (() => {
-  let ac = null, master = null;
+  let ac = null, master = null, verb = null, verbIn = null, noiseBuf = null, amb = null, foot = 0;
   let muted = false;
   try { muted = localStorage.getItem("mochi-exit-3d:muted") === "1"; } catch (e) {}
+  function impulse(sec, decay) {                     // 残響の素（左右で別のノイズ・前半に初期反射）
+    const n = Math.floor(ac.sampleRate * sec), buf = ac.createBuffer(2, n, ac.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < n; i++) { const t = i / n; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay) * (i < ac.sampleRate * 0.03 ? 0.4 : 1); }
+      [0.011, 0.019, 0.027, 0.041].forEach((s, k) => { const i = Math.floor(s * ac.sampleRate) + ch * 37; if (i < n) d[i] += 0.6 / (k + 1); });
+    }
+    return buf;
+  }
   function ensure() {
     if (!ac) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return false;
       ac = new AC(); master = ac.createGain(); master.gain.value = muted ? 0 : 1; master.connect(ac.destination);
+      verbIn = ac.createGain(); verb = ac.createConvolver(); verb.buffer = impulse(1.6, 3.2);
+      const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 180;   // 響きの低音は濁るので切る
+      const vg = ac.createGain(); vg.gain.value = 0.55; verbIn.connect(hp); hp.connect(verb); verb.connect(vg); vg.connect(master);
+      noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+      const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      if (ac.listener.forwardX) { ac.listener.upY.value = 1; }
     }
     if (ac.state === "suspended") ac.resume();
     return true;
   }
-  function tone(f, d, type, g, delay = 0) {
-    if (!ensure()) return;
-    const t = ac.currentTime + delay, o = ac.createOscillator(), v = ac.createGain();
-    o.type = type; o.frequency.value = f;
-    v.gain.setValueAtTime(0.0001, t); v.gain.exponentialRampToValueAtTime(g, t + 0.02); v.gain.exponentialRampToValueAtTime(0.0001, t + d);
-    o.connect(v); v.connect(master); o.start(t); o.stop(t + d + 0.05);
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  function out(node, dry, wet, pan = 0) {            // 乾いた音と響きへの送り
+    const p = ac.createStereoPanner ? ac.createStereoPanner() : null;
+    const g = ac.createGain(); g.gain.value = dry; const s = ac.createGain(); s.gain.value = wet;
+    if (p) { p.pan.value = pan; node.connect(p); p.connect(g); p.connect(s); } else { node.connect(g); node.connect(s); }
+    g.connect(master); s.connect(verbIn);
   }
+  function noiseHit(t, { f, q = 1, type = "bandpass", attack = 0.002, decay = 0.05, gain = 0.3, hp = 150, dry = 1, wet = 0.2, pan = 0, rate = 1 }) {
+    const src = ac.createBufferSource(); src.buffer = noiseBuf; src.playbackRate.value = rate;
+    const h = ac.createBiquadFilter(); h.type = "highpass"; h.frequency.value = hp;
+    const b = ac.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q;
+    const e = ac.createGain(); e.gain.setValueAtTime(0.0001, t); e.gain.exponentialRampToValueAtTime(gain, t + attack); e.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+    src.connect(h); h.connect(b); b.connect(e); out(e, dry, wet, pan);
+    src.start(t, Math.random() * 1.5); src.stop(t + attack + decay + 0.05);
+  }
+  function tone(t, f, { type = "sine", attack = 0.003, decay = 1, gain = 0.1, dry = 1, wet = 0.3, pan = 0, dest = null }) {
+    const o = ac.createOscillator(), e = ac.createGain(); o.type = type; o.frequency.value = f;
+    e.gain.setValueAtTime(0.0001, t); e.gain.exponentialRampToValueAtTime(gain, t + attack); e.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+    o.connect(e); if (dest) e.connect(dest); else out(e, dry, wet, pan);
+    o.start(t); o.stop(t + attack + decay + 0.05);
+  }
+  // おりん・風鈴のような金属の余韻（倍音が整数倍でない＝金属らしさ）
+  function bell(t, f0, ratios, gains, decay, level, opts = {}) {
+    ratios.forEach((r, k) => tone(t, f0 * r * rnd(0.998, 1.002), Object.assign({ decay: decay * (1 - k * 0.15), gain: level * gains[k], attack: 0.002 }, opts)));
+  }
+  // 風鈴: 舌が当たる「ち」という小さな打音＋ガラスの余韻。dest に立体音響の panner を渡す
+  function chime(dest, level) {
+    const t = ac.currentTime + 0.01, f0 = rnd(2350, 2650);
+    const tick = ac.createBufferSource(); tick.buffer = noiseBuf;
+    const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 4200;
+    const e = ac.createGain(); e.gain.setValueAtTime(level * 0.5, t); e.gain.exponentialRampToValueAtTime(0.0001, t + 0.012);
+    tick.connect(hp); hp.connect(e); e.connect(dest); tick.start(t, Math.random()); tick.stop(t + 0.03);
+    [1, 2.32, 4.25, 6.8].forEach((r, k) => tone(t, f0 * r * rnd(0.997, 1.003), { decay: 2.2 - k * 0.4, gain: level * [0.5, 0.22, 0.12, 0.05][k], dest }));
+    if (Math.random() < 0.6) setTimeout(() => amb && chime(dest, level * rnd(0.4, 0.7)), rnd(140, 420));   // 揺れて続けて鳴る
+  }
+  function positional(x, y, z) {
+    const p = ac.createPanner(); p.panningModel = "HRTF"; p.distanceModel = "inverse"; p.refDistance = 1.2; p.rolloffFactor = 1.1; p.maxDistance = 40;
+    if (p.positionX) { p.positionX.value = x; p.positionY.value = y; p.positionZ.value = z; } else p.setPosition(x, y, z);
+    const s = ac.createGain(); s.gain.value = 0.35; p.connect(master); p.connect(s); s.connect(verbIn); return p;
+  }
+  function loopNoise(filters, gain) {
+    const src = ac.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    let node = src; filters.forEach((f) => { node.connect(f); node = f; });
+    const g = ac.createGain(); g.gain.value = 0; node.connect(g); g.gain.linearRampToValueAtTime(gain, ac.currentTime + 1.5);
+    g.connect(master); src.start(); return { src, g };
+  }
+  function filt(type, f, q = 0.7) { const b = ac.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; }
   return {
     ensure,
-    step() { tone(200 + Math.random() * 30, 0.09, "sine", 0.05); },
-    good() { tone(660, 0.2, "triangle", 0.12); tone(880, 0.3, "triangle", 0.12, 0.12); },
-    bad() { tone(220, 0.3, "triangle", 0.12); tone(196, 0.4, "triangle", 0.12, 0.15); },
-    clear() { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.35, "triangle", 0.12, i * 0.12)); },
+    // 石畳の足音（左右の足で定位と音色を変える）
+    step() {
+      if (!ensure()) return; const t = ac.currentTime + 0.005, side = (foot ^= 1) ? -0.14 : 0.14, v = rnd(0.8, 1.15);
+      noiseHit(t, { f: rnd(1500, 2100), q: 1.1, attack: 0.0015, decay: rnd(0.035, 0.05), gain: 0.28 * v, hp: 300, wet: 0.22, pan: side });          // かかと
+      tone(t, rnd(150, 175), { decay: 0.045, gain: 0.07 * v, attack: 0.002, wet: 0.05, pan: side });                                                     // 体重の乗る鈍い音（110Hz より上）
+      noiseHit(t + rnd(0.07, 0.1), { f: rnd(2600, 3400), type: "lowpass", q: 0.5, attack: 0.006, decay: rnd(0.07, 0.11), gain: 0.07 * v, hp: 500, wet: 0.15, pan: side });   // つま先のこすれ
+    },
+    // 正解: おりんの「ちーん」
+    good() { if (!ensure()) return; const t = ac.currentTime + 0.02; bell(t, 742, [1, 2.71, 5.15], [0.6, 0.25, 0.08], 2.6, 0.13, { wet: 0.45 }); },
+    // 不正解: 木の「こつ、こつ」（拍子木を小さく）
+    bad() {
+      if (!ensure()) return; const t = ac.currentTime + 0.02;
+      [0, 0.19].forEach((d) => { noiseHit(t + d, { f: 1150, q: 6, attack: 0.001, decay: 0.07, gain: 0.32, hp: 400, wet: 0.35 }); tone(t + d, 1060, { decay: 0.06, gain: 0.06, wet: 0.3 }); });
+    },
+    // 脱出: 風鈴の連なり＋おりん
+    clear() {
+      if (!ensure()) return; const t = ac.currentTime + 0.05;
+      bell(t, 742, [1, 2.71, 5.15], [0.6, 0.25, 0.08], 3, 0.12, { wet: 0.5 });
+      [0.25, 0.45, 0.6, 0.9, 1.15].forEach((d, k) => bell(t + d, rnd(2300, 2700), [1, 2.32, 4.25], [0.4, 0.15, 0.06], 1.8, 0.07, { wet: 0.5, pan: k % 2 ? 0.3 : -0.3 }));
+    },
+    // 通路に入ったら環境音と風鈴を鳴らし始める（2つの風鈴は左のお店の軒先）
+    startAmbience(chimes) {
+      if (!ensure() || amb) return;
+      const room = loopNoise([filt("highpass", 130), filt("lowpass", 850)], 0.035);
+      const windBp = filt("bandpass", 650, 1.6), wind = loopNoise([filt("highpass", 300), windBp], 0.018);
+      const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = 0.07; lg.gain.value = 260; lfo.connect(lg); lg.connect(windBp.frequency); lfo.start();
+      const pans = chimes.map(([x, y, z]) => positional(x, y, z));
+      amb = { room, wind, lfo, pans, timers: [] };
+      pans.forEach((p, k) => { const loop = () => { if (!amb) return; chime(p, 0.12); amb.timers[k] = setTimeout(loop, rnd(3500, 9000)); }; amb.timers[k] = setTimeout(loop, 800 + k * 2300); });
+    },
+    stopAmbience() {
+      if (!amb) return; const a = amb; amb = null; a.timers.forEach(clearTimeout);
+      [a.room, a.wind].forEach(({ src, g }) => { g.gain.linearRampToValueAtTime(0, ac.currentTime + 0.8); src.stop(ac.currentTime + 0.9); });
+      a.lfo.stop(ac.currentTime + 0.9);
+    },
+    // 聞いている位置と向き（カメラと同じ）
+    listen(x, y, z, yaw) {
+      if (!ac) return; const L = ac.listener, fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+      if (L.positionX) { L.positionX.value = x; L.positionY.value = y; L.positionZ.value = z; L.forwardX.value = fx; L.forwardY.value = 0; L.forwardZ.value = fz; }
+      else { L.setPosition(x, y, z); L.setOrientation(fx, 0, fz, 0, 1, 0); }
+    },
     get muted() { return muted; },
+    get ambient() { return !!amb; },
     setMuted(m) { muted = m; try { localStorage.setItem("mochi-exit-3d:muted", m ? "1" : "0"); } catch (e) {} if (master) master.gain.value = m ? 0 : 1; }
   };
 })();
@@ -490,6 +612,19 @@ function box(w, h, d, mat, x, y, z) { const m = new THREE.Mesh(geoOf("b", w, h, 
 function plane(w, h, mat, x, y, z, ry = 0, rx = 0) { const m = new THREE.Mesh(geoOf("p", w, h), mat); m.position.set(x, y, z); m.rotation.set(rx, ry, 0); return m; }
 const BAYS = Array.from({ length: Math.round(HALL_L / BAY) }, (_, i) => HALL_L / 2 - BAY / 2 - i * BAY);   // 柱と柱の間の中心 z（10区画）
 
+// 風鈴（左のお店の軒先に2つ）。音（Sfx の立体音響）と同じ位置に置く
+const FURIN_POS = [[-HALL_W / 2 + 0.62, WALL_H - 0.32, BAYS[3]], [-HALL_W / 2 + 0.62, WALL_H - 0.32, BAYS[8]]];
+function furin(g, [x, y, z], k) {
+  const grp = new THREE.Group(); grp.position.set(x, y, z);
+  const glass = new THREE.Mesh(new THREE.SphereGeometry(0.055, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshStandardMaterial({ color: 0xe8f6ff, roughness: 0.05, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
+  grp.add(glass);
+  const paint = new THREE.Mesh(new THREE.SphereGeometry(0.056, 20, 6, 0, Math.PI * 2, Math.PI * 0.32, Math.PI * 0.12), col(k ? 0x2a6fd6 : 0xd8342c, { roughness: 0.3 })); grp.add(paint);   // 金魚・波を思わせる色の帯
+  grp.add(box(0.003, 0.09, 0.003, col(0xdddddd), 0, -0.05, 0));                                                    // 舌をつるす糸
+  const tan = new THREE.Mesh(new THREE.PlaneGeometry(0.045, 0.17), col(k ? 0xf2d14a : 0xf08aa8, { roughness: 0.9, side: THREE.DoubleSide })); tan.position.y = -0.18; grp.add(tan);   // 短冊
+  grp.add(box(0.003, 0.14, 0.003, col(0xdddddd), 0, 0.12, 0));
+  g.add(grp); return grp;
+}
+
 // 売り台（お店ごとに形を変える。どの店に何があったかを覚える手がかりにもなる）
 // 0=木の箱台＋赤い毛氈 1=ガラスのショーケース 2=赤い布を掛けた縁台＋かご 3=2段のひな壇 4=樽の上に板を渡した台
 const COUNTER_STYLE = [0, 1, 2, 3, 4, 1, 3, 0, 4, 2];
@@ -693,6 +828,7 @@ function buildHall(signNum) {
     g.add(grp); return grp;
   }
   s.lanterns.push(lantern(BAYS[2]), lantern(BAYS[4]), lantern(BAYS[7]));
+  s.furin = FURIN_POS.map((p, k) => furin(g, p, k));
   s.extraLantern = lantern(BAYS[6]); s.extraLantern.visible = false;
 
   // もち（普段は不在）
@@ -755,13 +891,21 @@ function makeScene(signNum, anomaly) {
 function setScene(s) { disposeScene(G.cur); G.cur = s; Quality.skip = 0.6; }
 function resetPlayer() { P.x = 0; P.z = SPAWN_Z; P.yaw = 0; P.pitch = 0; }
 
+// 記録: 自己ベスト（タイム最速）と、見つけた異変（図鑑）。どちらも localStorage（使えない環境では記録しないだけで遊べる）
+const Store = {
+  get(k, d) { try { const v = localStorage.getItem("mochi-exit-3d:" + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("mochi-exit-3d:" + k, JSON.stringify(v)); } catch (e) {} },
+};
+function fmtTime(ms) { const s = ms / 1000, m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`; }
+function addFound(id) { const f = Store.get("found", []); if (!f.includes(id)) { f.push(id); Store.set("found", f); return true; } return false; }
+
 let toastTimer = 0;
 function toast(msg, ms = 1500) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ms); }
 function fadeThen(fn) { const f = $("fade"); f.style.opacity = 1; setTimeout(() => { fn(); f.style.opacity = 0; }, 230); }
 function setExit(n) { G.exitNo = n; $("exitNo").textContent = n; }
 
 function startGame() {
-  Sfx.ensure(); setExit(0); G.round = 0; G.used.clear(); G.anomaly = null;
+  Sfx.ensure(); Sfx.startAmbience(FURIN_POS); setExit(0); G.round = 0; G.used.clear(); G.anomaly = null; G.miss = 0; G.newFound = 0; G.t0 = 0;
   show("play"); G.phase = "intro";
   setScene(makeScene(0, null)); resetPlayer();
   $("hint").textContent = $("hint").dataset.t;
@@ -779,14 +923,50 @@ function onEnd(dir) {                         // dir: "forward" | "back"
   G.busy = true; setTimeout(() => { G.busy = false; }, 600);
   if (G.phase === "intro") {
     G.phase = "play";
-    fadeThen(() => { if (dir === "forward") { toast("ここから判定スタート", 1400); nextScene(); } else { setScene(makeScene(0, null)); resetPlayer(); } });
+    fadeThen(() => { if (dir === "forward") { toast("ここから判定スタート", 1400); G.t0 = performance.now(); nextScene(); } else { setScene(makeScene(0, null)); resetPlayer(); } });
     return;
   }
-  if (G.final && dir === "forward") { G.phase = "ended"; Sfx.clear(); fadeThen(() => { G.running = false; $("resultInfo").textContent = "出口 8 に到達しました"; show("result"); }); return; }
+  if (G.final && dir === "forward") { G.phase = "ended"; Sfx.clear(); Sfx.stopAmbience(); fadeThen(() => { G.running = false; showResult(performance.now() - G.t0); }); return; }
   const correct = G.anomaly ? dir === "back" : dir === "forward";
   G.round++;
-  if (correct) { setExit(G.exitNo + 1); Sfx.good(); toast("正解"); } else { setExit(0); Sfx.bad(); toast("不正解… 出口 0 に戻る", 1800); }
+  if (correct && G.anomaly && addFound(G.anomaly.id)) G.newFound++;
+  if (correct) { setExit(G.exitNo + 1); Sfx.good(); toast("正解"); } else { setExit(0); G.miss++; Sfx.bad(); toast("不正解… 出口 0 に戻る", 1800); }
   fadeThen(nextScene);
+}
+
+function showResult(ms) {
+  const best = Store.get("best", null), isNew = !best || ms < best.timeMs;
+  if (isNew) Store.set("best", { timeMs: ms, miss: G.miss });
+  const b = isNew ? { timeMs: ms, miss: G.miss } : best, found = Store.get("found", []).length;
+  $("resultInfo").innerHTML =
+    `タイム <b>${fmtTime(ms)}</b>${isNew ? '<span class="new">自己ベスト更新！</span>' : ""}<br>` +
+    `ミス <b>${G.miss}</b> 回<br>` +
+    `<small>自己ベスト ${fmtTime(b.timeMs)}（ミス ${b.miss}）</small><br>` +
+    `見つけた異変 <b>${found}</b> / ${ANOMALIES.length}${G.newFound ? `　<small>今回 +${G.newFound}</small>` : ""}`;
+  show("result");
+}
+// 図鑑: 見つけた異変は、その場面の画像と説明を出す。未発見は「？？？」と難しさの●だけ（答えを先に教えない）
+const ZUKAN_VIEW = { mochi_in_hall: [-3, 0], light_dead: [3, 0], door_open: [9.2, -0.45], poster_gone: [11.6, -0.5], extra_lantern: [-1.2, 0.45], wall_red: [3, -0.6], poster_flipped: [11.6, -0.5], sign_wrong_num: [-5.2, 0] };
+const zThumb = {};
+function thumbOf(id) {
+  if (zThumb[id]) return zThumb[id];
+  const [z, yaw] = ZUKAN_VIEW[id] || [SPAWN_Z, 0], a = ANOMALIES.find((x) => x.id === id), s = makeScene(3, a);
+  renderer.setPixelRatio(1); renderer.setSize(640, 400, false); camera.aspect = 1.6; camera.fov = 70; camera.updateProjectionMatrix();
+  camera.position.set(0, EYE, z); camera.rotation.set(0, yaw, 0); renderer.render(s.scene, camera);
+  const url = canvas.toDataURL("image/jpeg", 0.85); disposeScene(s); resize();
+  if (G.cur && G.running) renderer.render(G.cur.scene, camera);
+  zThumb[id] = Promise.resolve(url); return zThumb[id];
+}
+function openZukan() {
+  const found = Store.get("found", []), grid = $("zGrid"); grid.innerHTML = "";
+  $("zCount").textContent = `${found.length} / ${ANOMALIES.length}` + (found.length === ANOMALIES.length ? "　コンプリート！" : "");
+  ANOMALIES.forEach((a) => {
+    const el = document.createElement("div"); el.className = "zc"; const ok = found.includes(a.id), lv = "●".repeat(a.level) + "○".repeat(3 - a.level);
+    el.innerHTML = ok ? `<div class="zq">…</div><p>${a.desc}<br><span class="lv">${lv}</span></p>` : `<div class="zq">？？？</div><p>まだ見つけていない<br><span class="lv">${lv}</span></p>`;
+    grid.appendChild(el);
+    if (ok) thumbOf(a.id).then((url) => { const im = new Image(); im.src = url; im.alt = a.desc; el.replaceChild(im, el.firstChild); });
+  });
+  $("zukan").classList.add("open");
 }
 
 /* ===== 7. 入力（PC: WASD/矢印+マウス / スマホ: 左スティック+右ドラッグ） ===== */
@@ -840,6 +1020,8 @@ function loop(now) {
   }
   camera.position.set(P.x, EYE + Math.sin(P.stepAcc * 8) * 0.012, P.z);
   camera.rotation.set(P.pitch, P.yaw, 0);
+  if (G.cur && G.cur.furin) G.cur.furin.forEach((f, k) => { f.rotation.x = Math.sin(now / 700 + k * 2) * 0.1; f.rotation.z = Math.sin(now / 1100 + k) * 0.06; });
+  Sfx.listen(P.x, EYE, P.z, P.yaw);
   if (G.cur) renderer.render(G.cur.scene, camera);
   tuneQuality(dt);
   requestAnimationFrame(loop);
@@ -849,14 +1031,19 @@ function loop(now) {
 $("hint").dataset.t = matchMedia("(pointer:coarse)").matches ? "左: 歩く　右: 見回す" : "WASD/矢印: 歩く　マウス: 見回す（クリックで操作開始）";
 $("startBtn").addEventListener("pointerdown", startGame);
 $("againBtn").addEventListener("pointerdown", startGame);
-$("howBtn").addEventListener("pointerdown", () => $("modal").classList.add("open"));
+// 一度クリアするまでは、異変が全部でいくつあるか（図鑑）を見せない（8番出口と同じ。2026-11-02 ユーザー指定）
+$("howBtn").addEventListener("pointerdown", () => { $("howZukan").style.display = Store.get("best", null) ? "" : "none"; $("modal").classList.add("open"); });
 $("closeHow").addEventListener("pointerdown", () => $("modal").classList.remove("open"));
+$("zukanBtn").addEventListener("pointerdown", openZukan);
+$("howZukan").addEventListener("pointerdown", () => { $("modal").classList.remove("open"); openZukan(); });
+$("zClose").addEventListener("pointerdown", () => $("zukan").classList.remove("open"));
 const muteBtn = $("muteBtn"); const syncMute = () => { muteBtn.textContent = Sfx.muted ? "🔇" : "🔊"; }; syncMute();
 muteBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); Sfx.ensure(); Sfx.setMuted(!Sfx.muted); syncMute(); });
 
 /* ===== 10. テストフック ===== */
 window.__exit3d = {
   anomalies: ANOMALIES.map((a) => ({ id: a.id, level: a.level, desc: a.desc })),
+  store: Store, showResult, openZukan, ambient: () => Sfx.ambient,
   info: () => ({ textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries, programs: renderer.info.programs ? renderer.info.programs.length : 0, calls: renderer.info.render.calls }),
   startGame, debugState: () => ({ pr: Quality.pr, fps: Quality.fps, phase: G.phase, exitNo: G.exitNo, round: G.round, anomaly: G.anomaly && G.anomaly.id, final: !!G.final, x: P.x, z: P.z, yaw: P.yaw }),
   forceAnomaly: (id) => { G.forced = id; },
