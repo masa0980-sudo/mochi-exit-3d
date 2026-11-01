@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>もち出口3D</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#120d0a;color:#fff6e6;font-family:"Hiragino Sans","Yu Gothic",Meiryo,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+#stage{position:fixed;inset:0;height:100dvh}
+canvas#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
+.screen{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center}
+.screen.active{display:flex}
+#title{background:radial-gradient(ellipse at 50% 40%,#3a2418,#120d0a 70%)}
+.logo{font-size:min(14vw,64px);font-weight:900;letter-spacing:.06em;color:#ffe9c4;text-shadow:0 0 18px #ff8a3c,0 3px 0 #7a3b17}
+.logo small{display:block;font-size:.34em;letter-spacing:.3em;color:#ffb36b;margin-top:6px}
+.btn{font:inherit;font-weight:800;font-size:20px;color:#2b1608;background:linear-gradient(#ffd9a0,#ffae52);border:0;border-radius:999px;padding:14px 44px;min-width:200px;box-shadow:0 5px 0 #a35a17,0 8px 18px #0008}
+.btn.sub{background:#3a2a20;color:#ffe3bd;box-shadow:0 4px 0 #1c120c;font-size:16px;padding:10px 30px;min-width:160px}
+.btn:active{transform:translateY(3px)}
+#hud{position:absolute;left:12px;top:max(12px,env(safe-area-inset-top));font-weight:900;font-size:22px;text-shadow:0 2px 6px #000;pointer-events:none;display:none}
+#play.active #hud{display:block}
+#muteBtn{position:absolute;right:12px;top:max(12px,env(safe-area-inset-top));width:44px;height:44px;border-radius:50%;border:0;background:#0006;color:#fff;font-size:20px;display:none}
+#play.active #muteBtn{display:block}
+#toast{white-space:nowrap;position:absolute;left:0;right:0;top:36%;text-align:center;font-size:clamp(18px,5.6vw,32px);font-weight:900;text-shadow:0 2px 10px #000;opacity:0;transition:opacity .25s;pointer-events:none;padding:0 16px}
+#toast.show{opacity:1}
+#fade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .22s}
+#stick{position:absolute;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;border:2px solid #fff5;background:#fff1;display:none;pointer-events:none}
+#knob{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;background:#fff8}
+#hint{position:absolute;bottom:max(14px,env(safe-area-inset-bottom));left:0;right:0;text-align:center;font-size:13px;color:#ffe3bd;opacity:.75;text-shadow:0 1px 4px #000;pointer-events:none;display:none}
+#play.active #hint{display:block}
+#result{background:radial-gradient(ellipse at 50% 40%,#3a2418,#120d0a 70%)}
+#result h2{margin:0;font-size:38px;color:#ffe9c4;text-shadow:0 0 16px #ff8a3c}
+#modal{position:absolute;inset:0;background:#000b;display:none;align-items:center;justify-content:center;padding:20px;z-index:5}
+#modal.open{display:flex}
+#modal .card{background:#2a1c14;border-radius:18px;padding:22px;max-width:420px;line-height:1.8;font-size:15px;text-align:left}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="gl"></canvas>
+  <div id="title" class="screen active">
+    <div class="logo">もち出口<small>3D  MOCHI EXIT</small></div>
+    <button class="btn" id="startBtn">はじめる</button>
+    <button class="btn sub" id="howBtn">あそびかた</button>
+  </div>
+  <div id="play" class="screen">
+    <div id="hud">出口 <span id="exitNo">0</span></div>
+    <button id="muteBtn" aria-label="音">🔊</button>
+    <div id="toast"></div>
+    <div id="stick"><div id="knob"></div></div>
+    <div id="hint"></div>
+  </div>
+  <div id="result" class="screen">
+    <h2>脱出成功！</h2>
+    <div id="resultInfo"></div>
+    <button class="btn" id="againBtn">もういちど</button>
+  </div>
+  <div id="fade"></div>
+  <div id="modal"><div class="card">
+    <b>あそびかた</b><br>
+    ・同じ通路を歩いて、<b>「いつもの通路」と違う所（異変）</b>を探します。<br>
+    ・異変を見つけたら<b>引き返す</b>。何もなければ<b>そのまま奥へ進む</b>。<br>
+    ・正解すると出口の番号が1つ増え、<b>8</b>になれば脱出。まちがえると<b>0</b>に戻ります。<br>
+    ・操作: パソコンは WASD／矢印＋マウス。スマホは左で歩く・右で見回す。<br><br>
+    <button class="btn sub" id="closeHow">とじる</button>
+  </div></div>
+</div>
+<script type="module">
+import * as THREE from "./vendor/three.module.min.js";
+
+/* ===== 1. Sfx（master ゲインを必ず通す。110Hz未満・打楽器は使わない） ===== */
+const Sfx = (() => {
+  let ac = null, master = null;
+  let muted = false;
+  try { muted = localStorage.getItem("mochi-exit-3d:muted") === "1"; } catch (e) {}
+  function ensure() {
+    if (!ac) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      ac = new AC(); master = ac.createGain(); master.gain.value = muted ? 0 : 1; master.connect(ac.destination);
+    }
+    if (ac.state === "suspended") ac.resume();
+    return true;
+  }
+  function tone(f, d, type, g, delay = 0) {
+    if (!ensure()) return;
+    const t = ac.currentTime + delay, o = ac.createOscillator(), v = ac.createGain();
+    o.type = type; o.frequency.value = f;
+    v.gain.setValueAtTime(0.0001, t); v.gain.exponentialRampToValueAtTime(g, t + 0.02); v.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(v); v.connect(master); o.start(t); o.stop(t + d + 0.05);
+  }
+  return {
+    ensure,
+    step() { tone(200 + Math.random() * 30, 0.09, "sine", 0.05); },
+    good() { tone(660, 0.2, "triangle", 0.12); tone(880, 0.3, "triangle", 0.12, 0.12); },
+    bad() { tone(220, 0.3, "triangle", 0.12); tone(196, 0.4, "triangle", 0.12, 0.15); },
+    clear() { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.35, "triangle", 0.12, i * 0.12)); },
+    get muted() { return muted; },
+    setMuted(m) { muted = m; try { localStorage.setItem("mochi-exit-3d:muted", m ? "1" : "0"); } catch (e) {} if (master) master.gain.value = m ? 0 : 1; }
+  };
+})();
+
+/* ===== 2. Renderer / 定数 ===== */
+const canvas = document.getElementById("gl");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 60);
+camera.rotation.order = "YXZ";
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h;
+  // 縦長画面では横の視野が狭くなり、壁のポスターや扉が画面外に出る。横 62° を下回らないよう縦の視野角を広げる（上限 100°）
+  const needV = 2 * Math.atan(Math.tan((62 * Math.PI / 180) / 2) / camera.aspect) * 180 / Math.PI;
+  camera.fov = Math.max(70, Math.min(100, needV));
+  camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize); resize();
+
+const HALL_W = 3.2, HALL_H = 2.8, HALL_L = 26;     // 通路の幅・高さ・長さ（z: +13 ～ -13）
+const SPAWN_Z = 10.5, FRONT_Z = -11.8, BACK_Z = 12.2, EYE = 1.55;
+
+/* ===== 3. テクスチャ（Canvas 生成。決定的＝乱数を使わない） ===== */
+function makeTex(w, h, draw, repeat) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
+  t.anisotropy = 4; return t;
+}
+function drawSignCanvas(ctx, w, h, text) {
+  ctx.fillStyle = "#0f7a3c"; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 6; ctx.strokeRect(6, 6, w - 12, h - 12);
+  ctx.fillStyle = "#fff"; ctx.font = "bold 64px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(text, w / 2, h / 2 + 4);
+}
+function posterTex(i) {
+  const cols = ["#ffd9a0", "#bfe3c0", "#f6b9c8", "#cfd8ff"], words = ["おだんご", "あんこ", "さくら", "つきみ"];
+  return makeTex(128, 192, (ctx, w, h) => {
+    ctx.fillStyle = cols[i % 4]; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#5a3a22"; ctx.fillRect(0, 0, w, 8); ctx.fillRect(0, h - 8, w, 8);
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(w / 2, 78, 36, 0, 7); ctx.fill();
+    ctx.fillStyle = "#222"; ctx.fillRect(w / 2 - 14, 72, 5, 8); ctx.fillRect(w / 2 + 9, 72, 5, 8);
+    ctx.fillStyle = "#d44"; ctx.fillRect(w / 2 - 6, 90, 12, 4);
+    ctx.fillStyle = "#3a2410"; ctx.font = "bold 28px sans-serif"; ctx.textAlign = "center"; ctx.fillText(words[i % 4], w / 2, 160);
+  });
+}
+
+/* ===== 4. 通路の組み立て（異変は apply(s) が s の部品を書き換えるだけ） ===== */
+function lamb(color, extra) { return new THREE.MeshLambertMaterial(Object.assign({ color }, extra || {})); }
+function box(w, h, d, mat, x, y, z) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); return m; }
+
+function buildHall(signNum) {
+  const s = { group: new THREE.Group(), scene: new THREE.Scene() };
+  const scene = s.scene; scene.background = new THREE.Color(0x120d0a); scene.fog = new THREE.Fog(0x120d0a, 7, 24);
+  scene.add(s.group);
+  const g = s.group;
+  const floorTex = makeTex(128, 128, (ctx, w, h) => {
+    ctx.fillStyle = "#8a5a36"; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#a0693f"; ctx.fillRect(0, 0, w / 2, h / 2); ctx.fillRect(w / 2, h / 2, w / 2, h / 2);
+    ctx.strokeStyle = "#5b3920"; ctx.lineWidth = 3; ctx.strokeRect(0, 0, w, h);
+  }, [HALL_W / 1.2, HALL_L / 1.2]);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(HALL_W, HALL_L), new THREE.MeshLambertMaterial({ map: floorTex }));
+  floor.rotation.x = -Math.PI / 2; g.add(floor);
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(HALL_W, HALL_L), lamb(0xe8d9c0)); ceil.rotation.x = Math.PI / 2; ceil.position.y = HALL_H; g.add(ceil);
+  s.wallL = new THREE.Mesh(new THREE.PlaneGeometry(HALL_L, HALL_H), lamb(0xf1e4cb)); s.wallL.rotation.y = Math.PI / 2; s.wallL.position.set(-HALL_W / 2, HALL_H / 2, 0); g.add(s.wallL);
+  s.wallR = new THREE.Mesh(new THREE.PlaneGeometry(HALL_L, HALL_H), lamb(0xf1e4cb)); s.wallR.rotation.y = -Math.PI / 2; s.wallR.position.set(HALL_W / 2, HALL_H / 2, 0); g.add(s.wallR);
+  const endMat = lamb(0xd9c7a6);
+  const endF = new THREE.Mesh(new THREE.PlaneGeometry(HALL_W, HALL_H), endMat); endF.position.set(0, HALL_H / 2, -HALL_L / 2); g.add(endF);
+  const endB = new THREE.Mesh(new THREE.PlaneGeometry(HALL_W, HALL_H), endMat); endB.rotation.y = Math.PI; endB.position.set(0, HALL_H / 2, HALL_L / 2); g.add(endB);
+  // 腰の木の羽目板
+  const wain = lamb(0x6b4428);
+  g.add(box(0.05, 0.9, HALL_L, wain, -HALL_W / 2 + 0.03, 0.45, 0), box(0.05, 0.9, HALL_L, wain, HALL_W / 2 - 0.03, 0.45, 0));
+
+  // ポスター（左壁）
+  s.posters = [];
+  [7, 2, -3, -8].forEach((z, i) => {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 1.05), new THREE.MeshLambertMaterial({ map: posterTex(i) }));
+    const pivot = new THREE.Group(); pivot.position.set(-HALL_W / 2 + 0.02, 1.5, z); pivot.rotation.y = Math.PI / 2; pivot.add(p); g.add(pivot);
+    s.posters.push(pivot);
+  });
+  // 扉（右壁・蝶番で回る）
+  s.doors = [];
+  [5, -5].forEach((z) => {
+    g.add(box(0.06, 2.2, 1.1, lamb(0x3b2414), HALL_W / 2 - 0.03, 1.1, z));
+    const hinge = new THREE.Group(); hinge.position.set(HALL_W / 2 - 0.08, 0, z - 0.45);
+    const leaf = box(0.05, 2.1, 0.9, lamb(0xa8532a), 0, 1.05, 0.45); hinge.add(leaf);
+    hinge.add(box(0.06, 0.12, 0.06, lamb(0xffd24a), 0, 1.0, 0.82));
+    g.add(hinge); s.doors.push(hinge);
+  });
+  // 看板「もち屋」
+  const shopTex = makeTex(256, 96, (ctx, w, h) => { ctx.fillStyle = "#7a2f1a"; ctx.fillRect(0, 0, w, h); ctx.fillStyle = "#ffe9c4"; ctx.font = "bold 58px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("もち屋", w / 2, h / 2 + 3); });
+  const shop = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.45), new THREE.MeshLambertMaterial({ map: shopTex })); shop.position.set(HALL_W / 2 - 0.02, 2.2, 0); shop.rotation.y = -Math.PI / 2; g.add(shop);
+
+  // 天井ライト＋点光源
+  s.lights = []; s.panels = [];
+  [10, 5, 0, -5, -10].forEach((z) => {
+    const pm = new THREE.MeshBasicMaterial({ color: 0xfff1cc }); const panel = box(0.6, 0.05, 0.6, pm, 0, HALL_H - 0.03, z); g.add(panel); s.panels.push(panel);
+    if (z === 8 || z === 0 || z === -8 || true) { const L = new THREE.PointLight(0xffe2b0, 5.5, 10, 1.6); L.position.set(0, HALL_H - 0.3, z); g.add(L); s.lights.push(L); }
+  });
+  scene.add(new THREE.AmbientLight(0xffead0, 0.55));
+
+  // 提灯
+  s.lanterns = [];
+  function lantern(z, x) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 14), new THREE.MeshBasicMaterial({ color: 0xe04a2a }));
+    m.position.set(x, HALL_H - 0.45, z); g.add(m);
+    const cord = box(0.01, 0.25, 0.01, lamb(0x222222), x, HALL_H - 0.12, z); g.add(cord);
+    return m;
+  }
+  s.lanterns.push(lantern(6, 0.95), lantern(-4, 0.95), lantern(-9, -0.95));
+  s.extraLantern = lantern(-1, -0.95); s.extraLantern.visible = false; s.extraLantern.parent.children.slice(-1)[0].visible = false;
+
+  // もち（普段は不在）
+  s.mochi = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 20, 14), new THREE.MeshLambertMaterial({ color: 0xffffff })); body.scale.y = 0.85; body.position.y = 0.3; s.mochi.add(body);
+  s.mochi.add(box(0.05, 0.09, 0.02, lamb(0x222222), -0.1, 0.38, 0.31), box(0.05, 0.09, 0.02, lamb(0x222222), 0.1, 0.38, 0.31), box(0.1, 0.03, 0.02, lamb(0xd44), 0, 0.27, 0.32));
+  s.mochi.position.set(0.8, 0, -6.5); s.mochi.visible = false; g.add(s.mochi);
+
+  // 出口サイン（前後から読める）
+  s.signCanvas = document.createElement("canvas"); s.signCanvas.width = 256; s.signCanvas.height = 96;
+  s.signTex = new THREE.CanvasTexture(s.signCanvas); s.signTex.colorSpace = THREE.SRGBColorSpace;
+  s.setSign = (n) => { drawSignCanvas(s.signCanvas.getContext("2d"), 256, 96, "出口 " + n); s.signTex.needsUpdate = true; };
+  s.setSign(signNum);
+  s.sign = new THREE.Group();
+  const sm = new THREE.MeshBasicMaterial({ map: s.signTex });
+  const sf = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.34), sm); const sb = sf.clone(); sb.rotation.y = Math.PI; sb.position.z = -0.01; sf.position.z = 0.01;
+  s.sign.add(sf, sb); s.sign.position.set(0, 2.35, -8.8); g.add(s.sign);
+  return s;
+}
+
+/* ===== 5. 異変（level 1=わかりやすい / 3=微妙）。apply は s の部品を書き換えるだけ ===== */
+const ANOMALIES = [
+  { id: "mochi_in_hall",  level: 1, desc: "通路にもちが立っていた",       apply: (s) => { s.mochi.visible = true; } },
+  { id: "light_dead",     level: 1, desc: "天井ライトが1つ消えていた",     apply: (s) => { s.panels[2].material.color.set(0x222222); s.lights[2].intensity = 0; s.lights[1].intensity = 1.5; s.lights[3].intensity = 1.5; } },
+  { id: "door_open",      level: 1, desc: "扉が開いていた",               apply: (s) => { s.doors[0].rotation.y = 1.25; } },
+  { id: "poster_gone",    level: 2, desc: "ポスターが1枚なくなっていた",   apply: (s) => { s.posters[0].visible = false; } },
+  { id: "extra_lantern",  level: 2, desc: "提灯が1つ増えていた",           apply: (s) => { s.extraLantern.visible = true; s.extraLantern.parent.children.slice(-1)[0].visible = true; } },
+  { id: "wall_red",       level: 2, desc: "右の壁が少し赤かった",           apply: (s) => { s.wallR.material.color.set(0xe89a86); } },
+  { id: "poster_flipped", level: 3, desc: "ポスターが逆さだった",           apply: (s) => { s.posters[0].children[0].rotation.z = Math.PI; } },
+  { id: "sign_wrong_num", level: 3, desc: "出口の番号がずれていた",         apply: (s) => { s.setSign(s.signNum + 1 > 8 ? 7 : s.signNum + 1); } },
+];
+
+/* ===== 6. ゲーム状態 ===== */
+const $ = (id) => document.getElementById(id);
+const SCREENS = ["title", "play", "result"];
+function show(name) { SCREENS.forEach((n) => $(n).classList.toggle("active", n === name)); }
+const G = { phase: "title", exitNo: 0, round: 0, cur: null, anomaly: null, forced: undefined, used: new Set() };
+const P = { x: 0, z: SPAWN_Z, yaw: 0, pitch: 0, stepAcc: 0 };
+
+function allowedLevels(round) { return round < 3 ? [1] : round < 6 ? [1, 2] : [1, 2, 3]; }
+function pickAnomaly(round) {
+  if (G.forced !== undefined) { const id = G.forced; G.forced = undefined; return id ? ANOMALIES.find((a) => a.id === id) : null; }
+  if (Math.random() > 0.6) return null;
+  let pool = ANOMALIES.filter((a) => allowedLevels(round).includes(a.level));
+  const fresh = pool.filter((a) => !G.used.has(a.id));
+  if (!fresh.length) { pool.forEach((a) => G.used.delete(a.id)); } else pool = fresh;
+  const a = pool[Math.floor(Math.random() * pool.length)]; G.used.add(a.id); return a;
+}
+function disposeScene(s) {
+  if (!s) return;
+  s.scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); }); } });
+}
+function makeScene(signNum, anomaly) {
+  const s = buildHall(signNum); s.signNum = signNum;
+  if (anomaly) anomaly.apply(s);
+  return s;
+}
+function setScene(s) { disposeScene(G.cur); G.cur = s; }
+function resetPlayer() { P.x = 0; P.z = SPAWN_Z; P.yaw = 0; P.pitch = 0; }
+
+let toastTimer = 0;
+function toast(msg, ms = 1500) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ms); }
+function fadeThen(fn) { const f = $("fade"); f.style.opacity = 1; setTimeout(() => { fn(); f.style.opacity = 0; }, 230); }
+function setExit(n) { G.exitNo = n; $("exitNo").textContent = n; }
+
+function startGame() {
+  Sfx.ensure(); setExit(0); G.round = 0; G.used.clear(); G.anomaly = null;
+  show("play"); G.phase = "intro";
+  setScene(makeScene(0, null)); resetPlayer();
+  $("hint").textContent = $("hint").dataset.t;
+  toast("いつもの通路を覚えよう", 3200);
+  G.running = true; last = performance.now(); requestAnimationFrame(loop);
+}
+function nextScene() {
+  const final = G.exitNo >= 8;
+  G.anomaly = final ? null : pickAnomaly(G.round);
+  setScene(makeScene(G.exitNo, G.anomaly)); resetPlayer(); G.final = final;
+}
+function onEnd(dir) {                         // dir: "forward" | "back"
+  if (G.busy) return;                         // フェード中は端を越えたままなので、二重判定を防ぐ
+  G.busy = true; setTimeout(() => { G.busy = false; }, 600);
+  if (G.phase === "intro") {
+    G.phase = "play";
+    fadeThen(() => { if (dir === "forward") { toast("ここから判定スタート", 1400); nextScene(); } else { setScene(makeScene(0, null)); resetPlayer(); } });
+    return;
+  }
+  if (G.final && dir === "forward") { G.phase = "ended"; Sfx.clear(); fadeThen(() => { G.running = false; $("resultInfo").textContent = "出口 8 に到達しました"; show("result"); }); return; }
+  const correct = G.anomaly ? dir === "back" : dir === "forward";
+  G.round++;
+  if (correct) { setExit(G.exitNo + 1); Sfx.good(); toast("正解"); } else { setExit(0); Sfx.bad(); toast("不正解… 出口 0 に戻る", 1800); }
+  fadeThen(nextScene);
+}
+
+/* ===== 7. 入力（PC: WASD/矢印+マウス / スマホ: 左スティック+右ドラッグ） ===== */
+const keys = new Set(); const touch = { stick: null, look: null, vx: 0, vy: 0 };
+addEventListener("keydown", (e) => { keys.add(e.code); });
+addEventListener("keyup", (e) => { keys.delete(e.code); });
+canvas.addEventListener("pointerdown", (e) => {
+  if (G.phase === "title") return;
+  if (e.pointerType === "mouse") { if (document.pointerLockElement !== canvas) canvas.requestPointerLock && canvas.requestPointerLock(); touch.mouse = true; return; }
+  canvas.setPointerCapture(e.pointerId);
+  if (e.clientX < innerWidth / 2 && touch.stick === null) {
+    touch.stick = e.pointerId; touch.ox = e.clientX; touch.oy = e.clientY;
+    const st = $("stick"); st.style.display = "block"; st.style.left = e.clientX + "px"; st.style.top = e.clientY + "px";
+  } else if (touch.look === null) { touch.look = e.pointerId; touch.lx = e.clientX; touch.ly = e.clientY; }
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "mouse") { if (document.pointerLockElement === canvas) { P.yaw -= e.movementX * 0.0022; P.pitch = Math.max(-1.2, Math.min(1.2, P.pitch - e.movementY * 0.0022)); } return; }
+  if (e.pointerId === touch.stick) {
+    let dx = e.clientX - touch.ox, dy = e.clientY - touch.oy; const r = Math.hypot(dx, dy), m = 50;
+    if (r > m) { dx = dx / r * m; dy = dy / r * m; }
+    touch.vx = dx / m; touch.vy = dy / m; const k = $("knob"); k.style.transform = `translate(${dx}px,${dy}px)`;
+  } else if (e.pointerId === touch.look) {
+    P.yaw -= (e.clientX - touch.lx) * 0.006; P.pitch = Math.max(-1.2, Math.min(1.2, P.pitch - (e.clientY - touch.ly) * 0.006));
+    touch.lx = e.clientX; touch.ly = e.clientY;
+  }
+});
+function endPointer(e) {
+  if (e.pointerId === touch.stick) { touch.stick = null; touch.vx = touch.vy = 0; $("stick").style.display = "none"; $("knob").style.transform = ""; }
+  if (e.pointerId === touch.look) touch.look = null;
+}
+canvas.addEventListener("pointerup", endPointer); canvas.addEventListener("pointercancel", endPointer);
+
+/* ===== 8. メインループ ===== */
+let last = 0;
+function loop(now) {
+  if (!G.running) return;
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  let fx = 0, fy = 0;                                    // fx: 右+ / fy: 前+
+  if (keys.has("KeyW") || keys.has("ArrowUp")) fy += 1; if (keys.has("KeyS") || keys.has("ArrowDown")) fy -= 1;
+  if (keys.has("KeyD")) fx += 1; if (keys.has("KeyA")) fx -= 1;
+  if (keys.has("ArrowLeft")) P.yaw += 1.8 * dt; if (keys.has("ArrowRight")) P.yaw -= 1.8 * dt;
+  fx += touch.vx; fy -= touch.vy;
+  const mag = Math.hypot(fx, fy); if (mag > 1) { fx /= mag; fy /= mag; }
+  const speed = 2.3;
+  if (G.phase === "intro" || G.phase === "play") {
+    const sy = Math.sin(P.yaw), cy = Math.cos(P.yaw);
+    const dx = (-sy * fy + cy * fx) * speed * dt, dz = (-cy * fy - sy * fx) * speed * dt;
+    P.x = Math.max(-HALL_W / 2 + 0.3, Math.min(HALL_W / 2 - 0.3, P.x + dx)); P.z += dz;
+    const moved = Math.hypot(dx, dz); P.stepAcc += moved; if (P.stepAcc > 0.75) { P.stepAcc = 0; Sfx.step(); }
+    if (P.z < FRONT_Z) onEnd("forward"); else if (P.z > BACK_Z) onEnd("back");
+  }
+  camera.position.set(P.x, EYE + Math.sin(P.stepAcc * 8) * 0.012, P.z);
+  camera.rotation.set(P.pitch, P.yaw, 0);
+  if (G.cur) renderer.render(G.cur.scene, camera);
+  requestAnimationFrame(loop);
+}
+
+/* ===== 9. UI 結線 ===== */
+$("hint").dataset.t = matchMedia("(pointer:coarse)").matches ? "左: 歩く　右: 見回す" : "WASD/矢印: 歩く　マウス: 見回す（クリックで操作開始）";
+$("startBtn").addEventListener("pointerdown", startGame);
+$("againBtn").addEventListener("pointerdown", startGame);
+$("howBtn").addEventListener("pointerdown", () => $("modal").classList.add("open"));
+$("closeHow").addEventListener("pointerdown", () => $("modal").classList.remove("open"));
+const muteBtn = $("muteBtn"); const syncMute = () => { muteBtn.textContent = Sfx.muted ? "🔇" : "🔊"; }; syncMute();
+muteBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); Sfx.ensure(); Sfx.setMuted(!Sfx.muted); syncMute(); });
+
+/* ===== 10. テストフック ===== */
+window.__exit3d = {
+  anomalies: ANOMALIES.map((a) => ({ id: a.id, level: a.level, desc: a.desc })),
+  startGame, debugState: () => ({ phase: G.phase, exitNo: G.exitNo, round: G.round, anomaly: G.anomaly && G.anomaly.id, final: !!G.final, x: P.x, z: P.z, yaw: P.yaw }),
+  forceAnomaly: (id) => { G.forced = id; },
+  teleport: (z, x = 0) => { P.z = z; P.x = x; },
+  setYaw: (y) => { P.yaw = y; },
+  skipIntro: () => { if (G.phase === "intro") { G.phase = "play"; nextScene(); } },
+  renderOnly(id, yaw = 0, z = SPAWN_Z) {            // 判定に触れず、その異変だけ描いた画像を返す（視認性の差分検証用）
+    const a = id ? ANOMALIES.find((x) => x.id === id) : null, s = makeScene(3, a);
+    camera.position.set(0, EYE, z); camera.rotation.set(0, yaw, 0); renderer.render(s.scene, camera);
+    const url = canvas.toDataURL("image/png"); disposeScene(s); return url;
+  },
+};
+// 画面を空にしないための初回描画
+{ const s = makeScene(0, null); camera.position.set(0, EYE, SPAWN_Z); renderer.render(s.scene, camera); disposeScene(s); }
+</script>
+</body>
+</html>
