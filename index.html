@@ -146,9 +146,16 @@ const SPAWN_Z = 10.5, FRONT_Z = -11.8, BACK_Z = 12.2, EYE = 1.55;
 function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 function canvasOf(w, h, draw) { const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h); return c; }
 const MAX_ANISO = renderer.capabilities.getMaxAnisotropy();
-function texOf(c, rx, ry) {                         // 共有の canvas から、繰り返し回数だけ違うテクスチャを作る（GPU への転送は Source 単位で1回）
+// テクスチャは (canvas, 繰り返し回数) ごとに1つだけ作り、全部の通路で使い回す（shared は disposeScene で捨てない）。
+// 通路ごとに作り直していた頃は1回で111個に増え、GPU メモリが足りず描画が止まった（2026-11-02 ソフト描画で再現）
+const TEX_CACHE = new Map(), CANVAS_ID = new WeakMap(); let canvasSeq = 0;
+function texOf(c, rx, ry, cache = true) {
+  if (!CANVAS_ID.has(c)) CANVAS_ID.set(c, ++canvasSeq);
+  const key = `${CANVAS_ID.get(c)}|${rx ? rx.toFixed(3) : 0}|${ry ? ry.toFixed(3) : 0}`;
+  if (cache && TEX_CACHE.has(key)) return TEX_CACHE.get(key);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = MAX_ANISO;
   if (rx) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); }
+  if (cache) { t.userData.shared = true; TEX_CACHE.set(key, t); }
   return t;
 }
 function jpText(ctx, text, x, y, size, color, weight = 900) {
@@ -335,24 +342,122 @@ function sharedCanvases() {
         ctx.fillStyle = "#c9a06a"; ctx.fillRect(w / 2 - 230, ty - 40, 460, 70); ctx.fillStyle = "#a07848"; ctx.fillRect(w / 2 - 170, ty + 30, 340, 90);   // 三方
         const rr = 46; [[-2, 0], [-1, 0], [0, 0], [1, 0], [2, 0], [-1.5, 1], [-0.5, 1], [0.5, 1], [1.5, 1], [-1, 2], [0, 2], [1, 2], [-0.5, 3], [0.5, 3], [0, 4]].forEach(([c, row]) => ball(ctx, w / 2 + c * rr * 1.9, ty - 80 - row * rr * 1.55, rr, WHITE, 0.5)); } },
   ];
-  CV.posters = POSTER_DEFS.map((p, i) => canvasOf(1024, 1536, (ctx, w, h) => {
-    const r = rng(61 + i), ph = 900;
-    p.photo(ctx, w, ph, r);
-    const vg = ctx.createRadialGradient(w / 2, ph / 2, ph * 0.3, w / 2, ph / 2, ph * 0.8); vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.28)"); ctx.fillStyle = vg; ctx.fillRect(0, 0, w, ph);
-    // 和紙の地
-    ctx.fillStyle = "#f6f0e2"; ctx.fillRect(0, ph, w, h - ph); speckle(ctx, w, h - ph, r, 5000, 0.06, 120, 100);
-    for (let k = 0; k < 220; k++) { ctx.strokeStyle = "rgba(170,150,110,0.12)"; ctx.lineWidth = 1; ctx.beginPath(); const x = r() * w, y = ph + r() * (h - ph); ctx.moveTo(x, y); ctx.lineTo(x + 20 + r() * 40, y + (r() - 0.5) * 10); ctx.stroke(); }
-    ctx.fillStyle = p.bg[1]; ctx.fillRect(0, ph, w, 14);
-    // 縦書きの見出し（写真にかかるように右上へ）・宣伝文
-    ctx.fillStyle = "rgba(246,240,226,0.92)"; ctx.fillRect(w - 230, 60, 170, 120 + [...p.title].length * 118);
-    vText(ctx, p.title, w - 145, 190, 108, "#2a160c");
-    ctx.textAlign = "left"; p.copy.forEach((t, n) => mText(ctx, t, 80, ph + 150 + n * 92, 70, "#3a2416"));
-    // 価格（朱の帯）・税込
-    ctx.fillStyle = "#b5271d"; ctx.fillRect(80, ph + 330, 520, 120); ctx.textAlign = "left"; mText(ctx, p.price, 110, ph + 415, 72, "#fff8ee", 800); mText(ctx, p.sub, 610, ph + 415, 40, "#5a3a26");
-    // 店名・落款
-    mText(ctx, "和菓子処 もち屋", 80, h - 60, 52, "#3a2416");
-    ctx.save(); ctx.translate(w - 170, h - 170); ctx.rotate(-0.05); ctx.strokeStyle = "#c0281e"; ctx.lineWidth = 9; ctx.strokeRect(0, 0, 110, 110);
-    ctx.textAlign = "center"; mText(ctx, "も", 30, 50, 44, "#c0281e", 900); mText(ctx, "ち", 80, 50, 44, "#c0281e", 900); mText(ctx, "屋", 55, 98, 44, "#c0281e", 900); ctx.restore();
+  // ポスター本体（2026-11-02 改訂）: 実際の和菓子・もちつきの告知ポスターにならい、4枚とも作風を変える。
+  // 太い縁取りの大見出し・和柄・丸いバッジ・星形の価格・細かい本文・店名と電話とQRの帯、をそろえて「本物の掲示物」らしく見せる
+  const GOTHIC = '"Hiragino Sans","Yu Gothic","Noto Sans JP",Meiryo,sans-serif';
+  function outlined(ctx, text, x, y, size, fill, strokes, font = GOTHIC, weight = 900) {   // 太い縁取り文字（外側の線から順に重ねる）
+    ctx.font = `${weight} ${size}px ${font}`; ctx.lineJoin = "round";
+    strokes.forEach(([c, lw]) => { ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.strokeText(text, x, y); });
+    ctx.fillStyle = fill; ctx.fillText(text, x, y);
+  }
+  function seigaiha(ctx, x0, y0, w, h, rad, c1, c2) {        // 青海波
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip();
+    for (let row = 0; row * rad * 0.5 < h + rad; row++) for (let col = -1; col * rad * 2 < w + rad * 2; col++) {
+      const cx = x0 + col * rad * 2 + (row % 2) * rad, cy = y0 + row * rad * 0.5;
+      for (let k = 4; k >= 1; k--) { ctx.fillStyle = k % 2 ? c1 : c2; ctx.beginPath(); ctx.arc(cx, cy, rad * k / 4, Math.PI, 0); ctx.fill(); }
+    }
+    ctx.restore();
+  }
+  function finePrint(ctx, x, y, lines, size, color, lh = 1.5) { ctx.textAlign = "left"; ctx.fillStyle = color; ctx.font = `600 ${size}px ${GOTHIC}`; lines.forEach((t, n) => ctx.fillText(t, x, y + n * size * lh)); }
+  function qr(ctx, x, y, s, r) {
+    ctx.fillStyle = "#fff"; ctx.fillRect(x - 8, y - 8, s + 16, s + 16); const n = 21, c = s / n; ctx.fillStyle = "#111";
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (r() < 0.47) ctx.fillRect(x + i * c, y + j * c, c, c);
+    [[0, 0], [n - 7, 0], [0, n - 7]].forEach(([i, j]) => { ctx.fillStyle = "#111"; ctx.fillRect(x + i * c, y + j * c, 7 * c, 7 * c); ctx.fillStyle = "#fff"; ctx.fillRect(x + (i + 1) * c, y + (j + 1) * c, 5 * c, 5 * c); ctx.fillStyle = "#111"; ctx.fillRect(x + (i + 2) * c, y + (j + 2) * c, 3 * c, 3 * c); });
+  }
+  function star(ctx, cx, cy, ro, ri, n, fill) { ctx.fillStyle = fill; ctx.beginPath(); for (let k = 0; k < n * 2; k++) { const a = -Math.PI / 2 + k * Math.PI / n, rr = k % 2 ? ri : ro; ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+  function circleBadge(ctx, cx, cy, rad, fill, lines, color, size) { ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(cx, cy, rad, 0, 7); ctx.fill(); ctx.textAlign = "center"; lines.forEach((t, n) => { ctx.fillStyle = color; ctx.font = `900 ${size[n]}px ${GOTHIC}`; ctx.fillText(t, cx, cy + (n - (lines.length - 1) / 2) * size[n] * 1.05 + size[n] * 0.35); }); }
+  function footer(ctx, w, h, r, bg, fg) {                     // 店名・電話・営業時間・QR の帯
+    ctx.fillStyle = bg; ctx.fillRect(0, h - 170, w, 170);
+    ctx.textAlign = "left"; ctx.fillStyle = fg; ctx.font = `900 54px ${MINCHO}`; ctx.fillText("和菓子処 もち屋", 50, h - 100);
+    finePrint(ctx, 52, h - 52, ["TEL 0120-00-0000　営業 9:00〜18:00（水曜定休）"], 26, fg);
+    qr(ctx, w - 170, h - 152, 120, r);
+  }
+  const SHOP_NOTES = ["※数量限定・なくなり次第終了となります", "※ご予約・お取り置き承ります", "※写真はイメージです"];
+  const POSTERS = [
+    // 0: 赤地に青海波・太い縁取りの大見出し・丸く切り抜いた商品写真・星形の価格（「もちつき大会」型の元気な告知）
+    (ctx, w, h, r) => {
+      ctx.fillStyle = "#c62a2f"; ctx.fillRect(0, 0, w, h);
+      seigaiha(ctx, 0, 0, w, 420, 70, "#b0232a", "#d2383b");
+      const vg = ctx.createLinearGradient(0, 300, 0, 520); vg.addColorStop(0, "rgba(198,42,47,0)"); vg.addColorStop(1, "#c62a2f"); ctx.fillStyle = vg; ctx.fillRect(0, 300, w, 220);
+      ctx.fillStyle = "#fff4d6"; ctx.fillRect(60, 70, 220, 70); ctx.textAlign = "center"; ctx.fillStyle = "#c62a2f"; ctx.font = `900 46px ${GOTHIC}`; ctx.fillText("新発売", 170, 122);
+      ctx.textAlign = "left"; outlined(ctx, "三色", 70, 330, 190, "#ffffff", [["#3a1408", 46], ["#ffd23f", 24]], MINCHO);
+      outlined(ctx, "だんご", 300, 520, 200, "#ffffff", [["#3a1408", 46], ["#ffd23f", 24]], MINCHO);
+      ctx.save(); ctx.beginPath(); ctx.arc(w / 2 - 40, 900, 300, 0, 7); ctx.clip();   // 丸く切り抜いた商品写真（卓の面が円の中ほどに来る高さで描く）
+      photoBg(ctx, w, 1300, "#f7e3cf", "#d6a57c", r);
+      plateOf(ctx, w / 2 - 40, 960, 330, 90, ["#1a0d0a", "#3b211a"]); [-1, 0, 1].forEach((n) => skewer(ctx, w / 2 - 40 + n * 30, 900 + n * 66, -0.2, 70, [PINK, WHITE, GREEN])); ctx.restore();
+      ctx.strokeStyle = "#fff4d6"; ctx.lineWidth = 16; ctx.beginPath(); ctx.arc(w / 2 - 40, 900, 300, 0, 7); ctx.stroke();
+      star(ctx, w - 190, 1060, 175, 140, 18, "#ffd23f"); ctx.textAlign = "center"; ctx.fillStyle = "#3a1408";
+      ctx.font = `900 46px ${GOTHIC}`; ctx.fillText("一本", w - 190, 1010); ctx.font = `900 92px ${GOTHIC}`; ctx.fillText("120円", w - 190, 1095); ctx.font = `700 30px ${GOTHIC}`; ctx.fillText("（税込）", w - 190, 1140);
+      circleBadge(ctx, 170, 640, 105, "#fff4d6", ["春の", "限定"], "#c62a2f", [44, 44]);
+      finePrint(ctx, 70, 1240, ["国産もち米を毎朝ついて、ひとつずつ手で丸めています。", "桜・白・よもぎの三色で、春のお花見にぴったり。", ...SHOP_NOTES.slice(0, 2)], 28, "#fff4d6");
+      footer(ctx, w, h, r, "#2a0e0a", "#fff4d6");
+    },
+    // 1: からし色の地・大きな杵と臼のイラスト・黒の太字に白縁・丸い日付バッジ（「餅つき体験会」型）
+    (ctx, w, h, r) => {
+      const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#c9bd45"); g.addColorStop(1, "#9e9530"); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+      speckle(ctx, w, h, r, 9000, 0.08, 60, 120);
+      finePrint(ctx, 60, 80, ["つきたてのお餅を、北海道産小豆のつぶあんで包みました。", "ひとくちで広がる、あんこの香りをどうぞ。"], 30, "#2e2a10");
+      // 臼と杵
+      ctx.save(); ctx.translate(w / 2 + 60, 760);
+      const ug = ctx.createLinearGradient(-230, 0, 230, 0); ug.addColorStop(0, "#6b4426"); ug.addColorStop(0.5, "#a8774a"); ug.addColorStop(1, "#5e3a20"); ctx.fillStyle = ug;
+      ctx.beginPath(); ctx.moveTo(-240, -60); ctx.lineTo(240, -60); ctx.lineTo(200, 300); ctx.lineTo(-200, 300); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = "rgba(50,28,12,0.5)"; ctx.lineWidth = 5; for (let k = 0; k < 6; k++) { ctx.beginPath(); ctx.moveTo(-210 + k * 84, -50); ctx.lineTo(-180 + k * 72, 290); ctx.stroke(); }
+      ctx.fillStyle = "#4a2c16"; ctx.beginPath(); ctx.ellipse(0, -60, 240, 60, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = "#fbf7ee"; ctx.beginPath(); ctx.ellipse(0, -72, 180, 44, 0, 0, 7); ctx.fill();
+      ctx.rotate(-0.6); ctx.fillStyle = "#c79a62"; ctx.fillRect(-20, -620, 40, 520); ctx.fillStyle = "#8a5a32"; ctx.fillRect(-120, -720, 240, 130); ctx.restore();
+      [[-300, 1000], [-150, 1050]].forEach(([dx, y]) => ball(ctx, w / 2 + dx, y, 90, ANKO, 0.35));
+      ctx.textAlign = "left"; outlined(ctx, "あんこ餅", 60, 420, 170, "#1c1a08", [["#fffbe8", 30]], MINCHO);
+      circleBadge(ctx, w - 170, 1130, 125, "#fffbe8", ["二個", "260円"], "#3a2e08", [46, 64]);
+      ctx.fillStyle = "#3a2e08"; ctx.fillRect(60, 1150, 520, 70); ctx.textAlign = "left"; ctx.fillStyle = "#fffbe8"; ctx.font = `900 42px ${GOTHIC}`; ctx.fillText("つぶあん たっぷり", 84, 1200);
+      finePrint(ctx, 62, 1265, SHOP_NOTES, 26, "#2e2a10");
+      footer(ctx, w, h, r, "#2e2a10", "#fffbe8");
+    },
+    // 2: 桜色の写真を全面に・縦書きの手書き風コピー・右下に丸いロゴ（「さくら餅」の写真広告型）
+    (ctx, w, h, r) => {
+      const g = ctx.createRadialGradient(w * 0.6, h * 0.62, 50, w / 2, h / 2, h * 0.75); g.addColorStop(0, "#fbe3ea"); g.addColorStop(1, "#e88fa8"); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+      for (let k = 0; k < 26; k++) { const x = r() * w, y = r() * h * 0.5, rad = 40 + r() * 90, b = ctx.createRadialGradient(x, y, 0, x, y, rad); b.addColorStop(0, "rgba(255,255,255,0.4)"); b.addColorStop(1, "rgba(255,255,255,0)"); ctx.fillStyle = b; ctx.fillRect(x - rad, y - rad, rad * 2, rad * 2); }
+      ctx.save(); ctx.translate(w * 0.55, h * 0.66); ctx.rotate(-0.25);
+      const lg = ctx.createLinearGradient(-420, 0, 420, 0); lg.addColorStop(0, "#3f5a22"); lg.addColorStop(0.5, "#7b9a42"); lg.addColorStop(1, "#3a5220");
+      ctx.fillStyle = lg; ctx.beginPath(); ctx.ellipse(0, 120, 430, 280, 0, Math.PI * 0.95, Math.PI * 2.05); ctx.fill();
+      ctx.strokeStyle = "rgba(225,240,190,0.65)"; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-420, 60); ctx.quadraticCurveTo(0, -160, 420, 60); for (let k = -4; k <= 4; k++) { ctx.moveTo(k * 90, -90 + Math.abs(k) * 12); ctx.lineTo(k * 120, 120); } ctx.stroke();
+      ball(ctx, 0, 140, 320, ["#ffeef3", "#f4adc0", "#cf7d95"], 0.45);
+      for (let k = 0; k < 1400; k++) { const a = r() * 7, d = r() * 300; ctx.fillStyle = `rgba(255,${200 + r() * 50},${215 + r() * 30},0.5)`; ctx.fillRect(Math.cos(a) * d, 140 + Math.sin(a) * d, 3, 3); }   // 道明寺のつぶつぶ
+      ctx.restore();
+      ctx.save(); ctx.globalAlpha = 0.95; vText(ctx, "この葉っぱ、", 150, 140, 76, "#ffffff", 1.12); vText(ctx, "食べる派？", 250, 260, 76, "#ffffff", 1.12); ctx.restore();
+      circleBadge(ctx, w - 150, h - 150, 100, "rgba(255,255,255,0.9)", ["SAKURA", "MOCHI", "もち屋"], "#c25672", [26, 26, 30]);
+      finePrint(ctx, 60, h - 110, ["季節限定　一個 180円（税込）", "桜の葉の塩漬けで、やさしく包みました。"], 30, "#ffffff");
+    },
+    // 3: 紺地に金の見出しと月・商品を写真と値札で一覧にしたチラシ型（「お月見和菓子」型）
+    (ctx, w, h, r) => {
+      ctx.fillStyle = "#16234f"; ctx.fillRect(0, 0, w, h);
+      for (let k = 0; k < 160; k++) { ctx.fillStyle = `rgba(255,240,200,${0.2 + r() * 0.6})`; ctx.fillRect(r() * w, r() * 420, 2, 2); }
+      const m = ctx.createRadialGradient(170, 200, 10, 170, 200, 130); m.addColorStop(0, "#fff6d0"); m.addColorStop(0.7, "#f1d87c"); m.addColorStop(0.75, "rgba(241,216,124,0.3)"); m.addColorStop(1, "rgba(241,216,124,0)"); ctx.fillStyle = m; ctx.fillRect(20, 50, 300, 300);
+      ctx.textAlign = "left"; outlined(ctx, "お月見", 330, 210, 130, "#f3d27a", [["#0c1430", 18]], MINCHO);
+      outlined(ctx, "和菓子", 330, 360, 130, "#f3d27a", [["#0c1430", 18]], MINCHO);
+      finePrint(ctx, 60, 440, ["十五夜のお供えに。ご家族のおやつに。"], 32, "#e8e0c8");
+      const cells = [
+        ["つきみ団子", "5個 300円", (c, x, y) => { [[0, 0], [-1, 0], [1, 0], [-0.5, -1], [0.5, -1], [0, -2]].forEach(([a, b]) => ball(c, x + a * 64, y + b * 52, 34, WHITE, 0.5)); }],
+        ["三色だんご", "1本 120円", (c, x, y) => skewer(c, x, y - 40, -0.1, 40, [PINK, WHITE, GREEN])],
+        ["大福", "1個 150円", (c, x, y) => ball(c, x, y - 40, 70, WHITE, 0.4)],
+        ["あんこ餅", "2個 260円", (c, x, y) => { ball(c, x - 50, y - 30, 56, ANKO, 0.3); ball(c, x + 50, y - 30, 56, ANKO, 0.3); }],
+        ["さくら餅", "1個 180円", (c, x, y) => ball(c, x, y - 40, 64, ["#ffeef3", "#f4adc0", "#cf7d95"], 0.4)],
+        ["みたらし", "1本 120円", (c, x, y) => skewer(c, x, y - 40, -0.1, 40, [["#f2c27a", "#c4823a", "#7a4a1e"], ["#f2c27a", "#c4823a", "#7a4a1e"], ["#f2c27a", "#c4823a", "#7a4a1e"]])],
+      ];
+      cells.forEach(([name, price, draw], k) => {
+        const cx = 60 + (k % 2) * 462, cy = 495 + Math.floor(k / 2) * 268;
+        ctx.fillStyle = "#fbf6ea"; ctx.fillRect(cx, cy, 440, 248);
+        const pg = ctx.createLinearGradient(cx, cy, cx, cy + 180); pg.addColorStop(0, "#efe2cc"); pg.addColorStop(1, "#d8c2a0"); ctx.fillStyle = pg; ctx.fillRect(cx + 12, cy + 12, 416, 170);
+        draw(ctx, cx + 220, cy + 150);
+        ctx.textAlign = "left"; ctx.fillStyle = "#16234f"; ctx.font = `900 34px ${MINCHO}`; ctx.fillText(name, cx + 20, cy + 228);
+        ctx.textAlign = "right"; ctx.fillStyle = "#b5271d"; ctx.font = `900 34px ${GOTHIC}`; ctx.fillText(price, cx + 424, cy + 228);
+      });
+      finePrint(ctx, 62, h - 200, [SHOP_NOTES[1] + "　" + SHOP_NOTES[2]], 26, "#e8e0c8");
+      footer(ctx, w, h, r, "#0c1430", "#f3d27a");
+    },
+  ];
+  CV.posters = POSTERS.map((draw, i) => canvasOf(1024, 1536, (ctx, w, h) => {
+    draw(ctx, w, h, rng(61 + i));
+    ctx.fillStyle = "rgba(255,255,255,0.05)"; ctx.fillRect(0, 0, w, h * 0.4);   // 表面のつや（上からの照り返し）
   }));
   // 看板「もち屋」
   CV.shopSign = canvasOf(512, 160, (ctx, w, h) => {
@@ -374,9 +479,56 @@ function signCanvas(text) {                         // 出口サイン: 緑地�
 /* ===== 4. 通路の組み立て（異変は apply(s) が s の部品を書き換えるだけ） ===== */
 function std(map, extra) { return new THREE.MeshStandardMaterial(Object.assign({ map, roughness: 0.75, metalness: 0 }, extra || {})); }
 function col(color, extra) { return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.7 }, extra || {})); }
-function box(w, h, d, mat, x, y, z) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); return m; }
-function plane(w, h, mat, x, y, z, ry = 0, rx = 0) { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); m.position.set(x, y, z); m.rotation.set(rx, ry, 0); return m; }
+const GEO_CACHE = new Map();                       // 同じ寸法の箱・板は形状を1つだけ作って使い回す
+function geoOf(kind, a, b, c = 0) {
+  const key = `${kind}|${a.toFixed(4)}|${b.toFixed(4)}|${c.toFixed(4)}`;
+  let g = GEO_CACHE.get(key);
+  if (!g) { g = kind === "b" ? new THREE.BoxGeometry(a, b, c) : new THREE.PlaneGeometry(a, b); g.userData.shared = true; GEO_CACHE.set(key, g); }
+  return g;
+}
+function box(w, h, d, mat, x, y, z) { const m = new THREE.Mesh(geoOf("b", w, h, d), mat); m.position.set(x, y, z); return m; }
+function plane(w, h, mat, x, y, z, ry = 0, rx = 0) { const m = new THREE.Mesh(geoOf("p", w, h), mat); m.position.set(x, y, z); m.rotation.set(rx, ry, 0); return m; }
 const BAYS = Array.from({ length: Math.round(HALL_L / BAY) }, (_, i) => HALL_L / 2 - BAY / 2 - i * BAY);   // 柱と柱の間の中心 z（10区画）
+
+// 売り台（お店ごとに形を変える。どの店に何があったかを覚える手がかりにもなる）
+// 0=木の箱台＋赤い毛氈 1=ガラスのショーケース 2=赤い布を掛けた縁台＋かご 3=2段のひな壇 4=樽の上に板を渡した台
+const COUNTER_STYLE = [0, 1, 2, 3, 4, 1, 3, 0, 4, 2];
+function counter(g, style, i, x, z, wB) {
+  const W = wB - 0.6, wood = (c, ry = 0.5) => std(texOf(sharedCanvases().wood, 1, ry), { roughness: 0.5, color: c });
+  const felt = col(0xa8261f, { roughness: 0.95 });
+  const place = (y, xs, dzs) => dzs.forEach((dz, k) => { const it = goods(i % 4, k); it.position.set(xs[k] ?? xs[0], y, z + dz); g.add(it); });
+  if (style === 0) {
+    g.add(box(0.5, 0.85, W, wood(0xb08060), x, 0.425, z), box(0.44, 0.006, W - 0.1, felt, x, 0.853, z));
+    place(0.856, [x], [-0.45, 0.45]);
+  } else if (style === 1) {
+    g.add(box(0.52, 0.62, W, wood(0x6e4426), x, 0.31, z));
+    g.add(box(0.5, 0.02, W - 0.02, col(0xf2ece0, { roughness: 0.6 }), x, 0.63, z));
+    const glass = new THREE.MeshStandardMaterial({ color: 0xdff2f7, roughness: 0.05, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide });
+    g.add(box(0.5, 0.34, W - 0.02, glass, x, 0.81, z));
+    const frame = col(0x3a2414, { roughness: 0.4 });
+    [[0.25, 0.81, W / 2], [-0.25, 0.81, W / 2], [0.25, 0.81, -W / 2], [-0.25, 0.81, -W / 2]].forEach(([dx, y, dz]) => g.add(box(0.025, 0.36, 0.025, frame, x + dx, y, z + dz)));
+    g.add(box(0.52, 0.025, W, frame, x, 0.985, z));
+    place(0.64, [x], [-0.4, 0.4]);
+  } else if (style === 2) {
+    g.add(box(0.7, 0.42, W + 0.1, wood(0x9a6a44), x - 0.05, 0.21, z));
+    g.add(box(0.72, 0.012, W + 0.14, felt, x - 0.05, 0.426, z), box(0.012, 0.3, W + 0.14, felt, x + 0.31, 0.29, z));   // 前に垂らした布
+    const basket = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.12, 24, 1, true), col(0xc29a5a, { roughness: 0.9, side: THREE.DoubleSide }));
+    basket.position.set(x - 0.1, 0.49, z + 0.45); g.add(basket);
+    place(0.432, [x - 0.1], [-0.45]);
+    const it = goods(i % 4, 1); it.position.set(x - 0.1, 0.44, z + 0.45); it.scale.setScalar(0.8); g.add(it);
+  } else if (style === 3) {
+    g.add(box(0.5, 0.55, W, wood(0xa87a54), x, 0.275, z), box(0.24, 0.32, W, wood(0x8a5e3c), x - 0.13, 0.71, z));
+    g.add(box(0.26, 0.006, W - 0.1, felt, x + 0.12, 0.553, z), box(0.22, 0.006, W - 0.1, felt, x - 0.13, 0.873, z));
+    place(0.556, [x + 0.12], [-0.45]); place(0.876, [x - 0.13], [0.45]);
+  } else {
+    [-0.55, 0.55].forEach((dz) => {
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.19, 0.74, 20), wood(0x9a6c40, 1)); barrel.position.set(x, 0.37, z + dz); g.add(barrel);
+      [0.12, 0.62].forEach((y) => { const hoop = new THREE.Mesh(new THREE.CylinderGeometry(0.215, 0.205, 0.03, 20), col(0x2a2622, { roughness: 0.4, metalness: 0.6 })); hoop.position.set(x, y, z + dz); g.add(hoop); });
+    });
+    g.add(box(0.5, 0.05, W + 0.2, wood(0xc49a6a), x, 0.765, z));
+    place(0.79, [x], [-0.45, 0.45]);
+  }
+}
 
 // 売り台の商品（お店の種類 type: 0=もち 1=茶 2=飴 3=団子、k: 左右どちらの品か）。数は少なく、形と質感で本物らしく
 function goods(type, k) {
@@ -469,9 +621,7 @@ function buildHall(signNum) {
     g.add(plane(1.1, wB, std(texOf(C.plank, 0.55, 1.3), { roughness: 0.8 }), -W2 - 0.55, WALL_H - 0.3, z, 0, Math.PI / 2));             // お店の天井
     g.add(box(0.06, 0.3, wB, std(texOf(C.wood, 1, 0.3)), -W2 + 0.03, WALL_H - 0.15, z));                                                 // 上の鴨居
     // 売り台と商品
-    g.add(box(0.5, 0.85, wB - 0.6, std(texOf(C.wood, 1, 0.5), { roughness: 0.5, color: 0xb08060 }), -W2 - 0.4, 0.425, z));
-    g.add(box(0.44, 0.006, wB - 0.7, col(0xa8261f, { roughness: 0.95 }), -W2 - 0.4, 0.853, z));          // 赤い毛氈
-    [-0.45, 0.45].forEach((dz, k) => { const it = goods(i % 4, k); it.position.set(-W2 - 0.4, 0.856, z + dz); g.add(it); });
+    counter(g, COUNTER_STYLE[i % COUNTER_STYLE.length], i, -W2 - 0.4, z, wB);
     // のれん: 3枚に割れた布。お店ごとに長さ・藍の濃さ・揺れ方を変え、しわ（波打ち）で光の当たり方に濃淡を出す
     {
       const nr = rng(100 + i), nh = 0.46 + nr() * 0.26, top = WALL_H - 0.27, tot = wB - 0.3, gap = 0.012, pw = (tot - 2 * gap) / 3;
@@ -553,7 +703,7 @@ function buildHall(signNum) {
 
   // 出口サイン（梁から吊る・前後から読める）
   s.signMat = new THREE.MeshBasicMaterial({ color: 0xf0f0f0 });
-  s.setSign = (n) => { if (s.signMat.map) s.signMat.map.dispose(); s.signMat.map = texOf(signCanvas("出口 " + n)); s.signMat.needsUpdate = true; };
+  s.setSign = (n) => { if (s.signMat.map) s.signMat.map.dispose(); s.signMat.map = texOf(signCanvas("出口 " + n), 0, 0, false); s.signMat.needsUpdate = true; };
   s.setSign(signNum);
   s.sign = new THREE.Group();
   s.sign.add(box(1.0, 0.4, 0.05, col(0x1e1e1e), 0, 0, 0), plane(0.94, 0.35, s.signMat, 0, 0, 0.026), plane(0.94, 0.35, s.signMat, 0, 0, -0.026, Math.PI),
@@ -592,7 +742,10 @@ function pickAnomaly(round) {
 }
 function disposeScene(s) {
   if (!s) return;
-  s.scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); }); } });
+  s.scene.traverse((o) => {
+    if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.map && !m.map.userData.shared) m.map.dispose(); m.dispose(); });
+  });
 }
 function makeScene(signNum, anomaly) {
   const s = buildHall(signNum); s.signNum = signNum;
@@ -704,6 +857,7 @@ muteBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); Sfx.ensure
 /* ===== 10. テストフック ===== */
 window.__exit3d = {
   anomalies: ANOMALIES.map((a) => ({ id: a.id, level: a.level, desc: a.desc })),
+  info: () => ({ textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries, programs: renderer.info.programs ? renderer.info.programs.length : 0, calls: renderer.info.render.calls }),
   startGame, debugState: () => ({ pr: Quality.pr, fps: Quality.fps, phase: G.phase, exitNo: G.exitNo, round: G.round, anomaly: G.anomaly && G.anomaly.id, final: !!G.final, x: P.x, z: P.z, yaw: P.yaw }),
   forceAnomaly: (id) => { G.forced = id; },
   teleport: (z, x = 0) => { P.z = z; P.x = x; },
