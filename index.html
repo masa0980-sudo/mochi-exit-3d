@@ -255,9 +255,12 @@ function tuneQuality(dt) {
   Quality.frames++; Quality.acc += dt;
   if (Quality.acc < 1) return;
   const fps = Quality.frames / Quality.acc; Quality.frames = 0; Quality.acc = 0; Quality.fps = Math.round(fps);
-  let next = Quality.pr;
-  if (fps < 45) next = Math.max(Quality.min, Quality.pr * 0.85);
-  else if (fps > 56) next = Math.min(Quality.max, Quality.pr + 0.15);
+  // 倍率を変えるたびに描画バッファを作り直すので、その1コマが止まり視点が飛んで見える。
+  // 上げ下げを繰り返さないよう、下げたら20秒はその倍率より上げず、上げるのは余裕が3秒続いたときだけにする
+  let next = Quality.pr; Quality.hold = Math.max(0, (Quality.hold || 0) - 1);
+  if (fps < 45) { next = Math.max(Quality.min, Quality.pr * 0.85); Quality.hold = 20; Quality.good = 0; }
+  else if (fps > 56) { Quality.good = (Quality.good || 0) + 1; if (Quality.hold === 0 && Quality.good >= 3) { next = Math.min(Quality.max, Quality.pr + 0.15); Quality.good = 0; } }
+  else Quality.good = 0;
   if (Math.abs(next - Quality.pr) > 0.01) { Quality.pr = next; resize(); }
 }
 
@@ -1032,7 +1035,7 @@ addEventListener("keydown", (e) => { keys.add(e.code); });
 addEventListener("keyup", (e) => { keys.delete(e.code); });
 canvas.addEventListener("pointerdown", (e) => {
   if (G.phase === "title") return;
-  if (e.pointerType === "mouse") { if (document.pointerLockElement !== canvas) canvas.requestPointerLock && canvas.requestPointerLock(); touch.mouse = true; return; }
+  if (e.pointerType === "mouse") { if (document.pointerLockElement !== canvas) lockMouse(); touch.mouse = true; return; }
   canvas.setPointerCapture(e.pointerId);
   if (e.clientX < innerWidth / 2 && touch.stick === null) {
     touch.stick = e.pointerId; touch.ox = e.clientX; touch.oy = e.clientY;
@@ -1040,7 +1043,7 @@ canvas.addEventListener("pointerdown", (e) => {
   } else if (touch.look === null) { touch.look = e.pointerId; touch.lx = e.clientX; touch.ly = e.clientY; }
 });
 canvas.addEventListener("pointermove", (e) => {
-  if (e.pointerType === "mouse") { if (document.pointerLockElement === canvas) { P.yaw -= e.movementX * 0.0022; P.pitch = Math.max(-1.2, Math.min(1.2, P.pitch - e.movementY * 0.0022)); } return; }
+  if (e.pointerType === "mouse") { if (document.pointerLockElement === canvas) mouseLook(e.movementX, e.movementY); return; }
   if (e.pointerId === touch.stick) {
     let dx = e.clientX - touch.ox, dy = e.clientY - touch.oy; const r = Math.hypot(dx, dy), m = 50;
     if (r > m) { dx = dx / r * m; dy = dy / r * m; }
@@ -1055,6 +1058,35 @@ function endPointer(e) {
   if (e.pointerId === touch.look) touch.look = null;
 }
 canvas.addEventListener("pointerup", endPointer); canvas.addEventListener("pointercancel", endPointer);
+// マウスの視点操作。視点が飛ぶ原因は3つあり、それぞれ次のように抑える
+// ・Windows の「ポインターの精度を高める」（加速）がかかると、速く振ったときだけ大きく回る → 加速なしの生の移動量を頼む
+// ・ポインターロック中、ブラウザがまれに数百ピクセルの外れ値を1回だけ送ってくる（ロック直後や画面端） → 直近の動きと比べて桁違いの単発なら捨てる
+// ・移動量をそのまま足すと、マウスの送信間隔と画面の書き換えがずれてガタつく → 溜めておき、毎コマ少しだけならして反映する
+const mouse = { dx: 0, dy: 0, avg: 0, skip: 0, held: null };
+function lockMouse() {
+  if (!canvas.requestPointerLock) return;
+  let p; try { p = canvas.requestPointerLock({ unadjustedMovement: true }); } catch (_) { p = null; }
+  if (p && p.catch) p.catch(() => { try { canvas.requestPointerLock(); } catch (_) {} });   // 未対応の環境では普通のロック
+}
+document.addEventListener("pointerlockchange", () => { mouse.skip = 2; mouse.dx = mouse.dy = 0; mouse.avg = 0; mouse.held = null; });
+function mouseLook(mx, my) {
+  if (mouse.skip > 0) { mouse.skip--; return; }                    // ロック直後の数回は位置の飛びが混ざる
+  const m = Math.hypot(mx, my);
+  // 外れ値（ふだんの6倍超かつ200px超）はいったん保留し、次の1回も同じ向きに大きく動いていれば本当に速く振ったとみなして戻す。
+  // ブラウザの外れ値は1回だけ単発で来るので捨てられ、素早く振り向く操作は取りこぼさない
+  if (mouse.held) {
+    const h = mouse.held; mouse.held = null;
+    if (m > 30 && h.x * mx + h.y * my > 0) { mouse.dx += h.x; mouse.dy += h.y; mouse.avg = Math.max(mouse.avg, h.m); }
+  }
+  if (m > 200 && m > mouse.avg * 6 + 40) { mouse.held = { x: mx, y: my, m }; return; }
+  mouse.avg = mouse.avg * 0.8 + m * 0.2;
+  mouse.dx += mx; mouse.dy += my;
+}
+function applyMouse(dt) {
+  const k = 1 - Math.exp(-dt / 0.018);                             // 約18msでならす（遅れは体感しにくい長さ）
+  const ux = mouse.dx * k, uy = mouse.dy * k; mouse.dx -= ux; mouse.dy -= uy;
+  P.yaw -= ux * 0.0022; P.pitch = Math.max(-1.2, Math.min(1.2, P.pitch - uy * 0.0022));
+}
 
 /* ===== 8. メインループ ===== */
 let last = 0;
@@ -1064,6 +1096,7 @@ function loop(now) {
   let fx = 0, fy = 0;                                    // fx: 右+ / fy: 前+
   if (keys.has("KeyW") || keys.has("ArrowUp")) fy += 1; if (keys.has("KeyS") || keys.has("ArrowDown")) fy -= 1;
   if (keys.has("KeyD")) fx += 1; if (keys.has("KeyA")) fx -= 1;
+  applyMouse(dt);
   if (keys.has("ArrowLeft")) P.yaw += 1.8 * dt; if (keys.has("ArrowRight")) P.yaw -= 1.8 * dt;
   fx += touch.vx; fy -= touch.vy;
   const mag = Math.hypot(fx, fy); if (mag > 1) { fx /= mag; fy /= mag; }
@@ -1106,6 +1139,7 @@ window.__exit3d = {
   forceAnomaly: (id) => { G.forced = id; },
   teleport: (z, x = 0) => { P.z = z; P.x = x; },
   setYaw: (y) => { P.yaw = y; },
+  mouseLook: (x, y) => mouseLook(x, y),             // ポインターロック無しでマウスの移動量を流す（外れ値除去・ならしの検証用）
   skipIntro: () => { if (G.phase === "intro") { G.phase = "play"; nextScene(); } },
   renderOnly(id, yaw = 0, z = SPAWN_Z) {            // 判定に触れず、その異変だけ描いた画像を返す（視認性の差分検証用）
     const a = id ? ANOMALIES.find((x) => x.id === id) : null, s = makeScene(3, a);
