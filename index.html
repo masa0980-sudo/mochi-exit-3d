@@ -592,7 +592,7 @@ function sharedCanvases() {
   CV.posterPrice = canvasOf(1024, 1536, (ctx, w) => {
     ctx.drawImage(CV.posters[0], 0, 0);
     star(ctx, w - 190, 1060, 175, 140, 18, "#ffd23f"); ctx.textAlign = "center"; ctx.fillStyle = "#3a1408";
-    ctx.font = `900 46px ${GOTHIC}`; ctx.fillText("一本", w - 190, 1010); ctx.font = `900 92px ${GOTHIC}`; ctx.fillText("150円", w - 190, 1095); ctx.font = `700 30px ${GOTHIC}`; ctx.fillText("（税込）", w - 190, 1140);
+    ctx.font = `900 46px ${GOTHIC}`; ctx.fillText("三本", w - 190, 1010); ctx.font = `900 92px ${GOTHIC}`; ctx.fillText("300円", w - 190, 1095);   // 1文字違い（120→150）は ΔE5 以上が 5 画素しかなく見えなかった ctx.font = `700 30px ${GOTHIC}`; ctx.fillText("（税込）", w - 190, 1140);
   });
   // 看板「もち屋」
   CV.shopSign = canvasOf(512, 160, (ctx, w, h) => {
@@ -907,7 +907,7 @@ const ANOMALIES = [
   { id: "dango_missing",   level: 3, desc: "団子が1串足りなかった",             apply: (s) => { const it = s.shops[3].goods.find((g) => g.userData.skewers); it.userData.skewers[1].forEach((m) => { m.visible = false; }); } },
   { id: "menu_text",       level: 3, desc: "品書きの札が1枚ちがっていた",       apply: (s) => { const t = texOf(sharedCanvases().shopMenuAlt); s.shops[7].backMat.map = t; s.shops[7].backMat.emissiveMap = t; s.shops[7].backMat.needsUpdate = true; } },
   { id: "door_knob",       level: 3, desc: "扉の取っ手が反対側にあった",         apply: (s) => { s.doorKnobs[1].position.z = 0.1; } },
-  { id: "poster_price",    level: 3, desc: "だんごの値段がちがっていた",         apply: (s) => { s.posters[0].children[1].material.map = texOf(sharedCanvases().posterPrice); s.posters[0].children[1].material.needsUpdate = true; } },
+  { id: "poster_price",    level: 3, desc: "だんごの本数と値段がちがっていた",         apply: (s) => { s.posters[0].children[1].material.map = texOf(sharedCanvases().posterPrice); s.posters[0].children[1].material.needsUpdate = true; } },
   { id: "no_echo",         level: 3, desc: "足音が響かなかった",                 apply: (s) => { s.noEcho = true; } },
   { id: "tanzaku_color",   level: 3, desc: "風鈴の短冊の色がちがっていた",       apply: (s) => { s.furin[0].children[3].material.color.set(0x6fc3ff); } },
   { id: "lamp_blue",       level: 3, desc: "吊り下げ灯が1つだけ青白かった",     apply: (s) => { s.panels[1].material.color.set(0xd2e4ff); s.lights[1].color.set(0xffe6c8); } },   // 全部変える・光まで青くすると通路全体の色が変わり、一番わかりやすい異変になった（色差 66%／31%）。電球の見た目を青白く、照らす光はわずかに冷たくするだけ
@@ -1003,7 +1003,7 @@ function showResult(ms) {
 const ZUKAN_VIEW = { mochi_in_hall: [-3, 0], light_dead: [3, 0], door_open: [9.2, -0.45], poster_gone: [11.6, -0.5], extra_lantern: [-1.2, 0.45], wall_red: [3, -0.6], poster_flipped: [11.6, -0.5], sign_wrong_num: [-5.2, 0],
   noren_gone: [8, 0.5], counter_gone: [6.2, 0.9], puddle: [1.5, 0], barrel_center: [-1.5, 0], two_mochi: [0.8, 0], lanterns_red: [8.5, 0.35],
   noren_swap: [8.8, 0.9], showcase_empty: [11.2, 0.9], furin_silent: [6.0, 0.6], sky_night: [3, 0.5], poster_swap: [3.8, -0.8], shop_dark: [3.4, 0.9], extra_pillar: [6.5, -0.45],
-  noren_short: [5.6, 0.9], dango_missing: [5.2, 1.1], menu_text: [-4.8, 1.0], door_knob: [-2.2, -0.8], poster_price: [11.6, -0.5], no_echo: [SPAWN_Z, 0], tanzaku_color: [6.0, 0.6], lamp_blue: [3, 0], stone_color: [6.4, 0] };
+  noren_short: [5.6, 0.9], dango_missing: [5.2, 1.1], menu_text: [-4.8, 1.0], door_knob: [-2.2, -0.8], poster_price: [10.4, -0.95], no_echo: [SPAWN_Z, 0], tanzaku_color: [6.0, 0.6], lamp_blue: [3, 0], stone_color: [6.4, 0] };
 const zThumb = {};
 function thumbOf(id) {
   if (zThumb[id]) return zThumb[id];
