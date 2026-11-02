@@ -910,7 +910,7 @@ const ANOMALIES = [
   { id: "poster_price",    level: 3, desc: "だんごの値段がちがっていた",         apply: (s) => { s.posters[0].children[1].material.map = texOf(sharedCanvases().posterPrice); s.posters[0].children[1].material.needsUpdate = true; } },
   { id: "no_echo",         level: 3, desc: "足音が響かなかった",                 apply: (s) => { s.noEcho = true; } },
   { id: "tanzaku_color",   level: 3, desc: "風鈴の短冊の色がちがっていた",       apply: (s) => { s.furin[0].children[3].material.color.set(0x6fc3ff); } },
-  { id: "lamp_blue",       level: 3, desc: "吊り下げ灯の色が青白かった",         apply: (s) => { s.panels.forEach((p) => p.material.color.set(0xdbe8ff)); s.lights.forEach((L) => L.color.set(0xcfe0ff)); } },
+  { id: "lamp_blue",       level: 3, desc: "吊り下げ灯が1つだけ青白かった",     apply: (s) => { s.panels[1].material.color.set(0xd2e4ff); s.lights[1].color.set(0xffe6c8); } },   // 全部変える・光まで青くすると通路全体の色が変わり、一番わかりやすい異変になった（色差 66%／31%）。電球の見た目を青白く、照らす光はわずかに冷たくするだけ
   { id: "stone_color",     level: 3, desc: "石畳の石が1枚だけ色ちがいだった",   apply: (s) => { s.oddStone.visible = true; } },
 ];
 
