@@ -258,7 +258,8 @@ function tuneQuality(dt) {
   // 倍率を変えるたびに描画バッファを作り直すので、その1コマが止まり視点が飛んで見える。
   // 上げ下げを繰り返さないよう、下げたら20秒はその倍率より上げず、上げるのは余裕が3秒続いたときだけにする
   let next = Quality.pr; Quality.hold = Math.max(0, (Quality.hold || 0) - 1);
-  if (fps < 45) { next = Math.max(Quality.min, Quality.pr * 0.85); Quality.hold = 20; Quality.good = 0; }
+  // 別作業でPCが急に重くなったときは、15%ずつでは追いつかず何秒もカクつく。重いほど一気に下げる
+  if (fps < 45) { next = Math.max(Quality.min, Quality.pr * (fps < 25 ? 0.6 : fps < 35 ? 0.75 : 0.85)); Quality.hold = 20; Quality.good = 0; }
   else if (fps > 56) { Quality.good = (Quality.good || 0) + 1; if (Quality.hold === 0 && Quality.good >= 3) { next = Math.min(Quality.max, Quality.pr + 0.15); Quality.good = 0; } }
   else Quality.good = 0;
   // ここで resize() すると、描いた直後に描画バッファが空になり、その1コマが空白で表示されて画面がチカッとする。
