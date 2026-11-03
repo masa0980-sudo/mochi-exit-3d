@@ -236,7 +236,7 @@ const Sfx = (() => {
 const canvas = document.getElementById("gl");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
-const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 60);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.15, 45);   // 壁際の飾りは 5〜8mm しか離れておらず、手前を切る距離が近いと遠くで面が競り合ってちらつく。壁には 0.3m までしか寄れないので 0.15 で足りる（霧は 30m で終わる）
 camera.rotation.order = "YXZ";
 // 描画倍率は端末に合わせて自動調整する（Quality）。描く点の数は倍率の2乗で増えるので、
 // 1秒ごとに滑らかさを測り、カクつけば下げ・余裕があれば最大2倍まで上げる。テクスチャは1回作って使い回すので負担にならない
