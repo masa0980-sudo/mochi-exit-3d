@@ -240,7 +240,7 @@ const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 60);
 camera.rotation.order = "YXZ";
 // 描画倍率は端末に合わせて自動調整する（Quality）。描く点の数は倍率の2乗で増えるので、
 // 1秒ごとに滑らかさを測り、カクつけば下げ・余裕があれば最大2倍まで上げる。テクスチャは1回作って使い回すので負担にならない
-const Quality = { max: Math.min(window.devicePixelRatio || 1, 2), min: 0.75, pr: Math.min(window.devicePixelRatio || 1, 1.5), frames: 0, acc: 0, skip: 0, fps: 0 };
+const Quality = { max: Math.min(window.devicePixelRatio || 1, 2), min: 0.5, pr: Math.min(window.devicePixelRatio || 1, 1.5), frames: 0, acc: 0, skip: 0, fps: 0 };
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setPixelRatio(Quality.pr); renderer.setSize(w, h, false); camera.aspect = w / h;
