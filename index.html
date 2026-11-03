@@ -1035,6 +1035,16 @@ function openZukan() {
 const keys = new Set(); const touch = { stick: null, look: null, vx: 0, vy: 0 };
 addEventListener("keydown", (e) => { keys.add(e.code); });
 addEventListener("keyup", (e) => { keys.delete(e.code); });
+// 押したまま別の窓へ移る・Esc でマウスロックが外れる・タブが隠れると keyup が届かず、押していないのに進み続ける。
+// そうなりうる場面では、押しているキーをすべて「離した」ことにする
+function releaseAll() {
+  keys.clear();
+  if (touch.stick !== null) { touch.stick = null; touch.vx = touch.vy = 0; $("stick").style.display = "none"; $("knob").style.transform = ""; }
+  touch.look = null;
+}
+addEventListener("blur", releaseAll);
+document.addEventListener("visibilitychange", () => { if (document.hidden) releaseAll(); });
+document.addEventListener("pointerlockchange", () => { if (document.pointerLockElement !== canvas) releaseAll(); });
 canvas.addEventListener("pointerdown", (e) => {
   if (G.phase === "title") return;
   if (e.pointerType === "mouse") { if (document.pointerLockElement !== canvas) lockMouse(); touch.mouse = true; return; }
@@ -1059,7 +1069,7 @@ function endPointer(e) {
   if (e.pointerId === touch.stick) { touch.stick = null; touch.vx = touch.vy = 0; $("stick").style.display = "none"; $("knob").style.transform = ""; }
   if (e.pointerId === touch.look) touch.look = null;
 }
-canvas.addEventListener("pointerup", endPointer); canvas.addEventListener("pointercancel", endPointer);
+canvas.addEventListener("pointerup", endPointer); canvas.addEventListener("pointercancel", endPointer); canvas.addEventListener("lostpointercapture", endPointer);
 // マウスの視点操作。視点が飛ぶ原因は3つあり、それぞれ次のように抑える
 // ・Windows の「ポインターの精度を高める」（加速）がかかると、速く振ったときだけ大きく回る → 加速なしの生の移動量を頼む
 // ・ポインターロック中、ブラウザがまれに数百ピクセルの外れ値を1回だけ送ってくる（ロック直後や画面端） → 直近の動きと比べて桁違いの単発なら捨てる
