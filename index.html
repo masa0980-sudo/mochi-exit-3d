@@ -370,26 +370,11 @@ function sharedCanvases() {
       ctx.save(); ctx.translate(x + 30, 150); ctx.textAlign = "center";
       [...t].forEach((ch, n) => jpText(ctx, ch, 0, 18 + n * 44, 40, "#2a1608")); ctx.restore();
     });
-    // 棚（右）と、その種類の商品を少しだけ
-    [400, 640].forEach((y, row) => {
-      ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(320, y + 12, 660, 14);
-      grain(ctx, 300, y, 680, 18, r, [92, 56, 30], false);
-      for (let k = 0; k < 3; k++) {
-        const x = 360 + k * 210 + row * 40;
-        if (i === 1) {          // 茶筒
-          const cg = ctx.createLinearGradient(x, 0, x + 90, 0); cg.addColorStop(0, "#1e3a26"); cg.addColorStop(0.45, "#4f7a58"); cg.addColorStop(1, "#16281b");
-          ctx.fillStyle = cg; ctx.fillRect(x, y - 150, 90, 150); ctx.fillStyle = "#f3ead6"; ctx.fillRect(x + 12, y - 120, 66, 80);
-          ctx.textAlign = "center"; jpText(ctx, "茶", x + 45, y - 64, 44, "#2a1608");
-        } else if (i === 2) {   // 飴の瓶
-          ctx.fillStyle = "rgba(200,225,235,0.45)"; ctx.fillRect(x, y - 150, 110, 150);
-          for (let n = 0; n < 26; n++) { ctx.fillStyle = ["#e8463c", "#f5c542", "#7cc576", "#f2f2f2"][n % 4]; ctx.beginPath(); ctx.arc(x + 12 + r() * 86, y - 12 - r() * 90, 9, 0, 7); ctx.fill(); }
-          ctx.fillStyle = "#8a5a30"; ctx.fillRect(x - 6, y - 170, 122, 22); ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.fillRect(x + 10, y - 140, 12, 120);
-        } else {                // 包み（もち・団子）
-          ctx.fillStyle = "#f2e8d2"; ctx.fillRect(x, y - 90, 150, 90); ctx.fillStyle = i === 0 ? "#b8322a" : "#3f6f4a"; ctx.fillRect(x + 62, y - 90, 26, 90);
-          ctx.fillStyle = "rgba(0,0,0,0.15)"; ctx.fillRect(x, y - 12, 150, 12);
-          ctx.fillStyle = "#fff"; ctx.fillRect(x + 20, y - 70, 34, 50); ctx.textAlign = "center"; jpText(ctx, i === 0 ? "餅" : "団", x + 37, y - 34, 28, "#2a1608");
-        }
-      }
+    // 棚と商品は立体で置く（shelfGoods）。ここには棚が壁に落とす影だけ描く（2026-11-04: 絵に描いた商品は平らなシールに見えた）
+    // 棚の高さ 1.05m・1.65m は、壁の画像（上端=2.75m）で y=633・409 に当たる。横は棚の範囲（画像の x=300〜977）
+    [409, 633].forEach((y) => {
+      const sh = ctx.createLinearGradient(0, y, 0, y + 46); sh.addColorStop(0, "rgba(40,18,6,0.45)"); sh.addColorStop(1, "rgba(40,18,6,0)");
+      ctx.fillStyle = sh; ctx.fillRect(300, y, 677, 46);
     });
   }));
   // 異変用: 団子屋の品書きの木札が1枚だけ違う版（真ん中の札「三色」→「きなこ」）
@@ -600,6 +585,86 @@ function sharedCanvases() {
     star(ctx, w - 190, 1060, 175, 140, 18, "#ffd23f"); ctx.textAlign = "center"; ctx.fillStyle = "#3a1408";
     ctx.font = `900 46px ${GOTHIC}`; ctx.fillText("三本", w - 190, 1010); ctx.font = `900 92px ${GOTHIC}`; ctx.fillText("300円", w - 190, 1095);   // 1文字違い（120→150）は ΔE5 以上が 5 画素しかなく見えなかった ctx.font = `700 30px ${GOTHIC}`; ctx.fillText("（税込）", w - 190, 1140);
   });
+  // ---- 単色・単純な形の物に質感を足す素材（2026-11-04「色が単調・まん丸や四角だとリアル感がない」と指摘） ----
+  // 継ぎ目なしで並べられるよう、ぼかしの玉は上下左右にも写して描く
+  const wrapBlob = (ctx, w, h, x, y, rad, rgba0) => {
+    for (const ox of [-w, 0, w]) for (const oy of [-h, 0, h]) {
+      const g = ctx.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, rad); g.addColorStop(0, rgba0); g.addColorStop(1, rgba0.replace(/[\d.]+\)$/, "0)"));
+      ctx.fillStyle = g; ctx.fillRect(x + ox - rad, y + oy - rad, rad * 2, rad * 2);
+    }
+  };
+  // むら: 白に近い灰色の濃淡。col() の単色に掛けて、塗りつぶしに見えないよう色を少しだけ揺らす
+  CV.mottle = canvasOf(256, 256, (ctx, w, h) => {
+    const r = rng(23); ctx.fillStyle = "#f4f4f4"; ctx.fillRect(0, 0, w, h);
+    for (let k = 0; k < 70; k++) { const v = r() < 0.55 ? 205 : 255; wrapBlob(ctx, w, h, r() * w, r() * h, 12 + r() * 46, `rgba(${v},${v},${v},${(0.06 + r() * 0.08).toFixed(3)})`); }
+    speckle(ctx, w, h, r, 2200, 0.07, 150, 100);
+  });
+  // 毛氈（赤いフェルト）: 色むら・毛羽・色あせ・ほこり
+  CV.felt = canvasOf(512, 512, (ctx, w, h) => {
+    const r = rng(29); ctx.fillStyle = "#a3241c"; ctx.fillRect(0, 0, w, h);
+    for (let k = 0; k < 40; k++) wrapBlob(ctx, w, h, r() * w, r() * h, 30 + r() * 90, r() < 0.5 ? `rgba(70,8,6,${(0.08 + r() * 0.1).toFixed(3)})` : `rgba(215,90,70,${(0.06 + r() * 0.08).toFixed(3)})`);
+    for (let k = 0; k < 9000; k++) {                                        // 毛羽（短い繊維）
+      const x = r() * w, y = r() * h, a = r() * 6.28, l = 2 + r() * 5, lt = r() < 0.5;
+      ctx.strokeStyle = lt ? `rgba(240,140,120,${0.05 + r() * 0.08})` : `rgba(40,0,0,${0.06 + r() * 0.1})`; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); ctx.stroke();
+    }
+    speckle(ctx, w, h, r, 500, 0.25, 180, 70);                              // ほこり
+  });
+  // 竹かごの編み目
+  CV.weave = canvasOf(256, 256, (ctx, w, h) => {
+    const r = rng(37), s = 16; ctx.fillStyle = "#4a3418"; ctx.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += s) for (let x = 0; x < w; x += s) {
+      const hz = ((x + y) / s) % 2 === 0, g = hz ? ctx.createLinearGradient(0, y, 0, y + s) : ctx.createLinearGradient(x, 0, x + s, 0), v = r() * 25;
+      g.addColorStop(0, `rgb(${150 + v},${112 + v},${60 + v})`); g.addColorStop(0.5, `rgb(${220 + v / 2},${185 + v},${120 + v})`); g.addColorStop(1, `rgb(${140 + v},${100 + v},${52 + v})`);
+      ctx.fillStyle = g; ctx.fillRect(x + 1, y + 1, s - 2, s - 2);
+    }
+    speckle(ctx, w, h, r, 900, 0.12, 40, 60);
+  });
+  // 打ち粉（片栗粉）をまぶしたもち肌: 白い粉のかたまり・粉の薄い所・小さなくぼみ
+  CV.powder = canvasOf(256, 256, (ctx, w, h) => {
+    const r = rng(43); ctx.fillStyle = "#ececec"; ctx.fillRect(0, 0, w, h);
+    for (let k = 0; k < 60; k++) wrapBlob(ctx, w, h, r() * w, r() * h, 8 + r() * 34, r() < 0.65 ? `rgba(255,255,255,${(0.35 + r() * 0.4).toFixed(3)})` : `rgba(190,185,178,${(0.15 + r() * 0.15).toFixed(3)})`);
+    speckle(ctx, w, h, r, 1800, 0.18, 175, 60);
+  });
+  // みたらしの焼き目（明るい地に焦げの斑点）
+  CV.scorch = canvasOf(256, 256, (ctx, w, h) => {
+    const r = rng(47); ctx.fillStyle = "#f2efe8"; ctx.fillRect(0, 0, w, h);
+    for (let k = 0; k < 45; k++) wrapBlob(ctx, w, h, r() * w, r() * h, 6 + r() * 22, `rgba(90,40,10,${(0.25 + r() * 0.45).toFixed(3)})`);
+    speckle(ctx, w, h, r, 1200, 0.2, 60, 80);
+  });
+  // 湯のみの釉薬: 細かい鉄粉の点と、上から下へ流れた釉だまり
+  CV.glaze = canvasOf(256, 256, (ctx, w, h) => {
+    const r = rng(53); const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#d8d8d8"); g.addColorStop(0.7, "#f6f6f6"); g.addColorStop(1, "#bdbdbd"); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    for (let k = 0; k < 40; k++) { const x = r() * w, l = 40 + r() * 140; ctx.fillStyle = `rgba(150,150,150,${0.08 + r() * 0.1})`; ctx.fillRect(x, h * 0.25, 3 + r() * 6, l); }
+    for (let k = 0; k < 500; k++) { ctx.fillStyle = `rgba(70,50,35,${0.3 + r() * 0.5})`; ctx.beginPath(); ctx.arc(r() * w, r() * h, 0.6 + r() * 1.4, 0, 7); ctx.fill(); }
+  });
+  // 茶葉の袋（クラフト紙＋帯のラベル）
+  CV.teaBag = ["煎茶", "ほうじ茶"].map((t, i) => canvasOf(256, 384, (ctx, w, h) => {
+    const r = rng(59 + i); ctx.fillStyle = "#b98d5a"; ctx.fillRect(0, 0, w, h);
+    for (let k = 0; k < 2500; k++) { ctx.strokeStyle = `rgba(${r() < 0.5 ? "90,60,30" : "230,200,160"},${0.08 + r() * 0.12})`; ctx.lineWidth = 1; const x = r() * w, y = r() * h; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + r() * 8 - 4, y + r() * 3); ctx.stroke(); }
+    ctx.fillStyle = "rgba(60,35,15,0.35)"; for (let y = 6; y < 40; y += 6) ctx.fillRect(0, y, w, 2);   // 折り返しの口
+    ctx.fillStyle = i ? "#6a3a1c" : "#2f5a34"; ctx.fillRect(0, h * 0.34, w, h * 0.42);
+    ctx.fillStyle = "#f3ead6"; ctx.fillRect(w * 0.22, h * 0.38, w * 0.56, h * 0.34);
+    ctx.save(); ctx.translate(w / 2, h * 0.38); ctx.textAlign = "center"; [...t].forEach((ch, n) => jpText(ctx, ch, 0, 34 + n * (t.length > 2 ? 30 : 46), t.length > 2 ? 30 : 44, "#2a1608")); ctx.restore();
+    jpText(ctx, "100g", w / 2 - 34, h * 0.88, 30, "#3a2410", 700);
+  }));
+  // 奥の棚の折箱の包み紙（もち屋=赤い帯「餅」・団子屋=緑の帯「団子」）。箱のどの面にも同じ紙が貼られる
+  CV.wrap = [[0, "#b8322a", "餅"], [3, "#3f6f4a", "団子"]].reduce((o, [t, band, ch]) => { o[t] = canvasOf(256, 256, (ctx, w, h) => {
+    const r = rng(71 + t); ctx.fillStyle = "#efe4cc"; ctx.fillRect(0, 0, w, h);
+    for (let k = 0; k < 1600; k++) { ctx.strokeStyle = `rgba(${r() < 0.5 ? "150,130,100" : "255,250,240"},${0.08 + r() * 0.1})`; const x = r() * w, y = r() * h; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + r() * 10 - 5, y + r() * 4 - 2); ctx.stroke(); }
+    ctx.fillStyle = band; ctx.fillRect(w * 0.42, 0, w * 0.16, h); ctx.fillStyle = "rgba(0,0,0,0.12)"; ctx.fillRect(w * 0.42, 0, 3, h);
+    ctx.fillStyle = "#fbf8f0"; ctx.fillRect(w * 0.12, h * 0.25, w * 0.22, h * 0.5); ctx.strokeStyle = band; ctx.lineWidth = 3; ctx.strokeRect(w * 0.12, h * 0.25, w * 0.22, h * 0.5);
+    ctx.save(); ctx.translate(w * 0.23, h * 0.25); ctx.textAlign = "center"; [...ch].forEach((c, n) => jpText(ctx, c, 0, 46 + n * 50, ch.length > 1 ? 40 : 52, "#2a1608")); ctx.restore();
+  }); return o; }, {});
+  // 値札（売り台の商品ごと。名前と値段はポスター・品書きと合わせる）
+  const TAGS = [[["大福", "一個 150円"], ["三色だんご", "一本 120円"]], [["煎茶", "100g 800円"], ["ほうじ茶", "100g 600円"]],
+    [["べっこう飴", "一瓶 400円"], ["はっか飴", "一袋 250円"]], [["三色", "一本 120円"], ["みたらし", "一本 120円"]]];
+  CV.tags = TAGS.map((row) => row.map(([name, price]) => canvasOf(256, 160, (ctx, w, h) => {
+    const r = rng(name.length * 7 + price.length); ctx.fillStyle = "#f8f1df"; ctx.fillRect(0, 0, w, h); speckle(ctx, w, h, r, 400, 0.1, 120, 80);
+    ctx.strokeStyle = "#b5271d"; ctx.lineWidth = 5; ctx.strokeRect(8, 8, w - 16, h - 16);
+    ctx.textAlign = "center"; ctx.fillStyle = "#2a1608"; ctx.font = `900 ${name.length > 4 ? 38 : 48}px ${MINCHO}`; ctx.fillText(name, w / 2, 70);
+    ctx.fillStyle = "#b5271d"; ctx.font = `900 40px ${GOTHIC}`; ctx.fillText(price, w / 2, 128);
+  })));
   // 看板「もち屋」
   CV.shopSign = canvasOf(512, 160, (ctx, w, h) => {
     const r = rng(53); grain(ctx, 0, 0, w, h, r, [70, 40, 20], false);
@@ -619,7 +684,8 @@ function signCanvas(text) {                         // 出口サイン: 緑地�
 
 /* ===== 4. 通路の組み立て（異変は apply(s) が s の部品を書き換えるだけ） ===== */
 function std(map, extra) { return new THREE.MeshStandardMaterial(Object.assign({ map, roughness: 0.75, metalness: 0 }, extra || {})); }
-function col(color, extra) { return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.7 }, extra || {})); }
+// 単色の物にも「むら」を掛ける（塗りつぶしに見えないように。画素ごとの手間はテクスチャ1枚ぶんで軽い）
+function col(color, extra) { return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.7, map: texOf(sharedCanvases().mottle, 1, 1) }, extra || {})); }
 const GEO_CACHE = new Map();                       // 同じ寸法の箱・板は形状を1つだけ作って使い回す
 function geoOf(kind, a, b, c = 0) {
   const key = `${kind}|${a.toFixed(4)}|${b.toFixed(4)}|${c.toFixed(4)}`;
@@ -650,7 +716,7 @@ const COUNTER_STYLE = [0, 1, 2, 3, 4, 1, 3, 0, 4, 2];
 function counter(g, style, i, x, z, wB) {
   const cg = new THREE.Group(), items = []; g.add(cg);
   const W = wB - 0.6, wood = (c, ry = 0.5) => std(texOf(sharedCanvases().wood, 1, ry), { roughness: 0.5, color: c });
-  const felt = col(0xa8261f, { roughness: 0.95 });
+  const felt = std(texOf(sharedCanvases().felt, 1, 4), { roughness: 0.95 });
   const place = (y, xs, dzs) => dzs.forEach((dz, k) => { const it = goods(i % 4, k); it.position.set(xs[k] ?? xs[0], y, z + dz); cg.add(it); items.push(it); });
   if (style === 0) {
     cg.add(box(0.5, 0.85, W, wood(0xb08060), x, 0.425, z), box(0.44, 0.006, W - 0.1, felt, x, 0.853, z));
@@ -662,13 +728,14 @@ function counter(g, style, i, x, z, wB) {
     cg.add(box(0.5, 0.34, W - 0.02, glass, x, 0.81, z));
     const frame = col(0x3a2414, { roughness: 0.4 });
     [[0.25, 0.81, W / 2], [-0.25, 0.81, W / 2], [0.25, 0.81, -W / 2], [-0.25, 0.81, -W / 2]].forEach(([dx, y, dz]) => cg.add(box(0.025, 0.36, 0.025, frame, x + dx, y, z + dz)));
-    cg.add(box(0.52, 0.025, W, frame, x, 0.985, z));
+    [0.25, -0.25].forEach((dx) => cg.add(box(0.025, 0.025, W, frame, x + dx, 0.985, z)));            // 天板はガラス（上から中が見えるよう、木は縁だけ）
+    [W / 2, -W / 2].forEach((dz) => cg.add(box(0.52, 0.025, 0.025, frame, x, 0.985, z + dz)));
     place(0.64, [x], [-0.4, 0.4]);
   } else if (style === 2) {
     cg.add(box(0.7, 0.42, W + 0.1, wood(0x9a6a44), x - 0.05, 0.21, z));
-    cg.add(box(0.72, 0.012, W + 0.14, felt, x - 0.05, 0.426, z), box(0.012, 0.3, W + 0.14, felt, x + 0.31, 0.29, z));   // 前に垂らした布
-    const basket = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.12, 24, 1, true), col(0xc29a5a, { roughness: 0.9, side: THREE.DoubleSide }));
-    basket.position.set(x - 0.1, 0.49, z + 0.45); cg.add(basket);
+    cg.add(box(0.72, 0.012, W + 0.14, felt, x - 0.05, 0.426, z), box(0.012, 0.3, W + 0.14, std(texOf(sharedCanvases().felt, 4, 0.6), { roughness: 0.95 }), x + 0.31, 0.29, z));   // 前に垂らした布
+    const weave = std(texOf(sharedCanvases().weave, 7, 1), { roughness: 0.85, side: THREE.DoubleSide });
+    const basket = new THREE.Mesh(shapeOf("basket", () => lathe([[0.001, 0], [0.13, 0], [0.155, 0.02], [0.176, 0.1], [0.19, 0.122], [0.18, 0.128], [0.168, 0.104]], 28)), weave); basket.position.set(x - 0.1, 0.43, z + 0.45); cg.add(basket);
     place(0.432, [x - 0.1], [-0.45]);
     const it = goods(i % 4, 1); it.position.set(x - 0.1, 0.44, z + 0.45); it.scale.setScalar(0.8); cg.add(it); items.push(it);
   } else if (style === 3) {
@@ -686,32 +753,163 @@ function counter(g, style, i, x, z, wB) {
   return { group: cg, goods: items };
 }
 
-// 売り台の商品（お店の種類 type: 0=もち 1=茶 2=飴 3=団子、k: 左右どちらの品か）。数は少なく、形と質感で本物らしく
+// ---- 形の道具: まん丸・真四角に見せないため、形をゆがませ、小さな部品は1つにまとめて描く ----
+const SHAPE_CACHE = new Map();                     // 商品の形は種類ごとに1回だけ作り、全部の通路で使い回す
+function shapeOf(key, make) { let g = SHAPE_CACHE.get(key); if (!g) { g = make(); g.userData.shared = true; SHAPE_CACHE.set(key, g); } return g; }
+// 回転体（湯のみ・瓶・かごなど）。pts は [半径, 高さ] を下から順に
+function lathe(pts, seg = 24) { return new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg); }
+// ゆがみ: 頂点の位置で決まるなめらかなノイズで、中心から少しだけ押し引きする（継ぎ目の頂点も同じだけ動くので割れない）。
+// 形は大きさ1で作ってからゆがませ、mergeParts の行列で実寸にする。flat を渡すと底をつぶす（置いた もち のように）
+function warp(geo, seed, amp, flat = null, freq = 2.6) {
+  const r = rng(seed), ph = [r(), r(), r(), r(), r()].map((v) => v * 6.28), p = geo.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const n = Math.sin(v.x * freq + ph[0]) * Math.cos(v.y * freq * 1.3 + ph[1]) + Math.sin(v.z * freq * 0.9 + ph[2]) * Math.cos(v.x * freq * 1.7 + ph[3]) + 0.5 * Math.sin((v.x + v.y + v.z) * freq * 2.1 + ph[4]);
+    v.multiplyScalar(1 + amp * n / 2.5);
+    if (flat !== null && v.y < -flat) v.y = -flat + (v.y + flat) * 0.12;
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals(); return geo;
+}
+// 小さな部品をまとめて1つの形にする（描画の回数を増やさないため）。色は頂点ごとに持たせる（材質は vertexColors）
+const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
+function mat(x, y, z, sx, sy, sz, rx = 0, ry = 0, rz = 0) { return new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), _q.setFromEuler(_e.set(rx, ry, rz)), new THREE.Vector3(sx, sy, sz)); }
+function mergeParts(parts) {
+  let n = 0;
+  const list = parts.map(({ geo, m, color }) => { const g = (geo.index ? geo.toNonIndexed() : geo.clone()).applyMatrix4(m); n += g.attributes.position.count; return { g, c: new THREE.Color(color) }; });
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), uv = new Float32Array(n * 2), cl = new Float32Array(n * 3); let o = 0;
+  list.forEach(({ g, c }) => {
+    const cnt = g.attributes.position.count; pos.set(g.attributes.position.array, o * 3); nor.set(g.attributes.normal.array, o * 3); if (g.attributes.uv) uv.set(g.attributes.uv.array, o * 2);
+    for (let i = 0; i < cnt; i++) { cl[(o + i) * 3] = c.r; cl[(o + i) * 3 + 1] = c.g; cl[(o + i) * 3 + 2] = c.b; }
+    o += cnt; g.dispose();
+  });
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.BufferAttribute(pos, 3)); out.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+  out.setAttribute("uv", new THREE.BufferAttribute(uv, 2)); out.setAttribute("color", new THREE.BufferAttribute(cl, 3));
+  return out;
+}
+// 色を少しだけ揺らす（同じ菓子でも1つずつ違う色に）
+function jitter(hex, r, amt = 0.04) { const c = new THREE.Color(hex), hsl = {}; c.getHSL(hsl); return c.setHSL(hsl.h + (r() - 0.5) * amt * 0.3, Math.max(0, hsl.s + (r() - 0.5) * amt), Math.min(1, hsl.l + (r() - 0.5) * amt)); }
+const UNIT_BALL = () => new THREE.SphereGeometry(1, 22, 16);
+
+// 売り台の商品（お店の種類 type: 0=もち 1=茶 2=飴 3=団子、k: 左右どちらの品か）。
+// 2026-11-04 作り直し: 1つずつ形と色の違う菓子・打ち粉や焼き目の質感・皿の上の懐紙・値札で「本物の店先」に寄せる。
+// 菓子の粒はまとめて1つの形にしてあるので、数を増やしても描く回数はほとんど増えない
 function goods(type, k) {
-  const grp = new THREE.Group();
+  const grp = new THREE.Group(), C = sharedCanvases();
+  const food = (tex, rough, extra) => new THREE.MeshStandardMaterial(Object.assign({ vertexColors: true, map: texOf(C[tex], 1, 1), roughness: rough }, extra || {}));
+  const add = (geo, material, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); grp.add(m); return m; };
   const lacquer = col(k ? 0x1a1210 : 0x6e1a14, { roughness: 0.25 });
-  const sph = (r, color, x, y, z, sy = 1, rough = 0.6) => { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), col(color, { roughness: rough })); m.scale.y = sy; m.position.set(x, y, z); grp.add(m); return m; };
-  if (type === 3 || (type === 0 && k)) {               // 三色団子（団子屋・もち屋の片側）
-    grp.add(box(0.2, 0.012, 0.34, lacquer, 0, 0.006, 0));
-    grp.userData.skewers = [-0.09, 0, 0.09].map((dz) => {
-      const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.17, 6), col(0xd9c08a)); stick.rotation.z = Math.PI / 2; stick.position.set(0, 0.035, dz); grp.add(stick);
-      return [stick, ...[0xf2a7b8, 0xf7f3ea, 0x8fbf6a].map((c, n) => sph(0.026, c, -0.05 + n * 0.05, 0.036, dz, 0.95, 0.75))];
+  const kaishi = (w, d, y, ry = 0) => { const p = plane(w, d, col(0xf7f3ea, { roughness: 0.9 }), 0, y, 0, ry, -Math.PI / 2); grp.add(p); };   // 皿に敷く懐紙
+  // 値札（通路側に向けて少し後ろへ傾けて立てる）
+  const tag = (x, z) => { const t = plane(0.075, 0.047, std(texOf(C.tags[type][k]), { roughness: 0.8 }), x, 0.026, z, Math.PI / 2); t.rotateX(-0.35); grp.add(t); };
+  const dangoTray = () => { grp.add(box(0.2, 0.012, 0.34, lacquer, 0, 0.006, 0)); kaishi(0.17, 0.3, 0.0125); };
+  const stickMat = std(texOf(C.timber, 1, 1), { roughness: 0.7, color: 0xf0d9a8 });
+  const skewer = (key, cols, dz, ry, ballMat) => {               // 串1本（串＋だんご3つ）。dango_missing の異変で1本ごと隠せるよう Group にする
+    const sg = new THREE.Group(); sg.position.set(0, 0.035, dz); sg.rotation.y = ry; grp.add(sg);
+    const stick = new THREE.Mesh(shapeOf("stick", () => new THREE.CylinderGeometry(0.0032, 0.0028, 0.175, 6)), stickMat); stick.rotation.z = Math.PI / 2; sg.add(stick);
+    const balls = new THREE.Mesh(shapeOf(key, () => { const r = rng(key.length * 31 + Math.round(dz * 100 + 50)); return mergeParts(cols.map((c, n) => {
+      const s = 0.025 + r() * 0.003; return { geo: warp(UNIT_BALL(), 900 + n * 7 + Math.round(dz * 1000), 0.07, 0.8), m: mat(-0.052 + n * 0.052, 0.001, 0, s * 1.06, s * 0.94, s, r() * 0.4, r() * 6, 0), color: jitter(c, r) }; })); }), ballMat);
+    sg.add(balls); return [sg];
+  };
+  if (type === 3 || (type === 0 && k)) {
+    dangoTray();
+    if (type === 3 && k) {                             // みたらし: 焼き目のついた団子に、つやのあるたれ
+      const ballMat = food("scorch", 0.3, { emissive: 0x2a1204, emissiveIntensity: 0.15 });
+      grp.userData.skewers = [-0.09, 0, 0.09].map((dz, n) => skewer("mitarashi" + n, [0xd59a4e, 0xcf9246, 0xd8a058], dz, (n - 1) * 0.05, ballMat));
+      const sauce = new THREE.Mesh(shapeOf("sauce", () => warp(new THREE.CylinderGeometry(1, 1, 0.1, 28), 77, 0.25, null, 3)), col(0x8a4a16, { roughness: 0.15 }));
+      sauce.scale.set(0.07, 0.03, 0.12); sauce.position.set(0.01, 0.0135, 0.01); grp.add(sauce);
+    } else {                                           // 三色団子（桜・白・よもぎ）
+      const ballMat = food("powder", 0.7);
+      grp.userData.skewers = [-0.09, 0, 0.09].map((dz, n) => skewer("sanshoku" + n, [0xf2a7b8, 0xf7f3ea, 0x8fbf6a], dz, (n - 1) * -0.04, ballMat));
+    }
+    tag(0.13, 0.12);
+  } else if (type === 0) {                             // 大福: 白・桜・よもぎ。1つずつ大きさと形が違い、打ち粉をまぶしてある
+    add(shapeOf("plate", () => lathe([[0.001, 0], [0.11, 0], [0.13, 0.004], [0.15, 0.016], [0.142, 0.018], [0.12, 0.009], [0.001, 0.009]], 32)), lacquer);
+    kaishi(0.17, 0.17, 0.0095, 0.6);
+    add(shapeOf("daifuku", () => { const r = rng(5); const cols = [0xfbf8f2, 0xf7d0d6, 0xfbf8f2, 0xa9bd83, 0xfaf6ee, 0xf6c9cf];
+      return mergeParts([[0, 0], [0.072, 0.05], [-0.07, 0.055], [0.065, -0.065], [-0.068, -0.058], [0.004, 0.09]].map(([x, z], n) => {
+        const s = 0.04 + r() * 0.008; return { geo: warp(UNIT_BALL(), 300 + n, 0.09, 0.55), m: mat(x, 0.01 + s * 0.4, z, s * (1 + r() * 0.12), s * 0.72, s * (1 + r() * 0.12), 0, r() * 6, (r() - 0.5) * 0.15), color: jitter(cols[n], r) }; })); }),
+      food("powder", 0.95), 0, 0, 0);
+    tag(0.17, 0.1);
+  } else if (type === 1) {
+    if (!k) {                                          // 茶筒2本（金属のふた・ラベル）＋茶托にのせた湯のみ
+      const label = std(texOf(C.teaLabel), { roughness: 0.45 }), lid = col(0xa79f90, { roughness: 0.35, metalness: 0.25 });
+      [[-0.08, 0.14], [0.06, 0.17]].forEach(([dz, h]) => {
+        const c = new THREE.Mesh(shapeOf("can" + h, () => new THREE.CylinderGeometry(0.045, 0.045, h, 28)), label); c.position.set(0, h / 2, dz); c.rotation.y = dz * 8; grp.add(c);
+        const l = new THREE.Mesh(shapeOf("canlid", () => lathe([[0.001, 0], [0.047, 0], [0.0475, 0.03], [0.044, 0.034], [0.001, 0.034]], 28)), lid); l.position.set(0, h - 0.02, dz); grp.add(l);
+      });
+      add(shapeOf("chataku", () => lathe([[0.001, 0], [0.05, 0], [0.058, 0.006], [0.054, 0.009], [0.035, 0.007], [0.001, 0.007]], 28)), std(texOf(C.timber, 1, 1), { roughness: 0.4, color: 0x8a5a38 }), 0.06, 0, 0.17);
+      add(shapeOf("yunomi", () => lathe([[0.001, 0], [0.02, 0], [0.021, 0.006], [0.026, 0.008], [0.034, 0.06], [0.032, 0.061], [0.024, 0.012], [0.001, 0.012]], 28)), col(0x9fb6a0, { roughness: 0.25, map: texOf(C.glaze, 1, 1) }), 0.06, 0.007, 0.17);
+      add(shapeOf("tea", () => new THREE.CircleGeometry(0.031, 24).rotateX(-Math.PI / 2)), col(0x8a9a3a, { roughness: 0.1 }), 0.06, 0.052, 0.17);
+    } else {                                           // 茶葉の袋（クラフト紙・口を折り返したもの）
+      [[-0.1, 0], [0, 1], [0.1, 0]].forEach(([dz, v], n) => {
+        const b = new THREE.Mesh(shapeOf("teabag", () => warp(new THREE.BoxGeometry(1, 1, 1, 3, 4, 3), 61, 0.05, null, 3)), std(texOf(C.teaBag[v]), { roughness: 0.85 }));
+        b.scale.set(0.035, 0.13, 0.075); b.position.set(-0.01 * n, 0.065, dz); b.rotation.set(0, Math.PI / 2 + (n - 1) * 0.12, (n - 1) * 0.03); grp.add(b);
+      });
+    }
+    tag(0.15, -0.1);
+  } else if (!k) {                                     // 飴の瓶: 肩の丸いガラス瓶に、形と色のばらばらな飴（べっこう・赤・黄・緑・白）
+    const candies = shapeOf("candies", () => { const r = rng(11), cols = [0xc8781e, 0xe23c30, 0xf2c13c, 0x6fbf62, 0xf4f1ea, 0xd98a2a]; const parts = [];
+      for (let n = 0; n < 34; n++) { const a = r() * 6.28, d = Math.sqrt(r()) * 0.042, s = 0.011 + r() * 0.006;
+        parts.push({ geo: warp(new THREE.SphereGeometry(1, 10, 8), 500 + n, 0.25), m: mat(Math.cos(a) * d, 0.008 + Math.floor(n / 9) * 0.022 + r() * 0.01, Math.sin(a) * d, s * 1.3, s * 0.8, s, r() * 6, r() * 6, r() * 6), color: jitter(cols[n % cols.length], r, 0.08) }); }
+      return mergeParts(parts); });
+    const glass = new THREE.MeshStandardMaterial({ color: 0xdcecf0, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide, map: texOf(C.mottle, 1, 1) });
+    const candyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.18, emissive: 0x3a1a08, emissiveIntensity: 0.12 });
+    [-0.07, 0.07].forEach((dz) => {
+      add(candies, candyMat, 0, 0, dz).rotation.y = dz * 20;
+      add(shapeOf("jar", () => lathe([[0.001, 0], [0.05, 0], [0.058, 0.01], [0.06, 0.11], [0.05, 0.14], [0.036, 0.15], [0.036, 0.162]], 28)), glass, 0, 0, dz);
+      add(shapeOf("jarlid", () => lathe([[0.001, 0], [0.04, 0], [0.041, 0.022], [0.035, 0.026], [0.001, 0.026]], 28)), std(texOf(C.timber, 1, 1), { roughness: 0.5, color: 0xd9a670 }), 0, 0.158, dz);
     });
-  } else if (type === 0) {                             // 大福（白と薄桃）
-    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.016, 28), lacquer); plate.position.y = 0.008; grp.add(plate);
-    [[0, 0], [0.07, 0.06], [-0.07, 0.06], [0.07, -0.06], [-0.07, -0.06]].forEach(([x, z], n) => sph(0.042, n === 0 ? 0xf6c9cf : 0xfbf8f2, x, 0.04, z, 0.68, 0.95));
-  } else if (type === 1) {                             // 茶筒と湯のみ
-    const label = std(texOf(sharedCanvases().teaLabel), { roughness: 0.4 });
-    [-0.08, 0.06].forEach((dz, n) => { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.14 + n * 0.03, 24), label); c.position.set(0, 0.07 + n * 0.015, dz); grp.add(c); });
-    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.026, 0.05, 20), col(0xe9dcc2, { roughness: 0.35 })); cup.position.set(0.05, 0.025, 0.17); grp.add(cup);
-  } else {                                             // 飴の瓶（ガラス越しに色とりどりの飴）
-    const candy = [0xe8463c, 0xf5c542, 0x7cc576, 0xf2f2f2];
-    [-0.07, 0.07].forEach((dz, n) => {
-      for (let c = 0; c < 9; c++) sph(0.016, candy[(c + n) % 4], Math.cos(c * 2.1) * 0.03, 0.02 + (c % 3) * 0.03, dz + Math.sin(c * 2.1) * 0.03, 1, 0.3);
-      const jar = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 0.15, 24, 1, true), new THREE.MeshStandardMaterial({ color: 0xd8eef5, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
-      jar.position.set(0, 0.075, dz); grp.add(jar);
-      const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.025, 24), col(0x8a5a30, { roughness: 0.5 })); lid.position.set(0, 0.162, dz); grp.add(lid);
-    });
+    tag(0.15, 0.02);
+  } else {                                             // はっか飴など、ひねり包みの飴の山（かごにも入れる）
+    kaishi(0.22, 0.22, 0.002, 0.3);
+    add(shapeOf("wrapped", () => { const r = rng(17), cols = [0xf4f1ea, 0xd9493c, 0x5f9fd6, 0xf2c94c, 0x7cc576, 0xf4f1ea]; const parts = [], body = new THREE.CylinderGeometry(1, 1, 1, 10), end = new THREE.ConeGeometry(1, 1, 8);
+      for (let n = 0; n < 26; n++) { const a = r() * 6.28, d = Math.sqrt(r()) * 0.075, y = 0.01 + (0.075 - d) * 0.35 + r() * 0.006, ry = r() * 6, rz = Math.PI / 2 + (r() - 0.5) * 0.5, c = jitter(cols[n % cols.length], r, 0.06);
+        const px = Math.cos(a) * d, pz = Math.sin(a) * d, ax = Math.cos(ry), az = -Math.sin(ry);
+        parts.push({ geo: body, m: mat(px, y, pz, 0.009, 0.026, 0.009, 0, ry, rz), color: c });
+        [-1, 1].forEach((sg) => parts.push({ geo: end, m: mat(px + ax * sg * 0.018, y, pz + az * sg * 0.018, 0.008, 0.012, 0.004 + r() * 0.003, 0, ry, rz + (sg > 0 ? Math.PI : 0)), color: c }));
+      }
+      return mergeParts(parts); }), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, map: texOf(C.mottle, 1, 1) }));
+    tag(0.15, -0.09);
+  }
+  return grp;
+}
+
+// 奥の棚（2段）と商品。形は種類ごとに1回だけ作って全部のお店・通路で使い回す（1 店あたり描く回数は 4〜5 回）。
+// 位置は奥の壁からの距離 x・高さ y・お店の中心からの z。壁の画像に描いた棚の影（1.05m・1.65m）と合わせてある
+const SHELF_Y = [1.05, 1.65], SHELF_Z = [0.36, 0.04, -0.28, -0.6, -0.92], CAN_H = [0.19, 0.225, 0.175, 0.21, 0.185];
+function shelfGoods(g, type, bx, z0) {
+  const C = sharedCanvases(), grp = new THREE.Group(); grp.position.set(bx, 0, z0); g.add(grp);
+  // お店の明かりは奥の壁を自分で光らせて表しているので、棚の物にも少しだけ自分の色で光らせて暗く沈まないようにする
+  const lit = (m, k = 0.28) => { m.emissiveMap = m.map; m.emissive = new THREE.Color(0xffffff); m.emissiveIntensity = k; return m; };
+  const shelfWood = lit(std(texOf(C.wood, 1, 0.12), { roughness: 0.6, color: 0x9a6a44 }), 0.18);
+  SHELF_Y.forEach((y) => grp.add(box(0.2, 0.024, 1.62, shelfWood, 0.1, y - 0.012, -0.27)));
+  const slots = (row) => SHELF_Z.map((dz, n) => [0.1, SHELF_Y[row], dz + row * 0.05, n]);
+  const mesh = (key, make, material) => { const m = new THREE.Mesh(shapeOf(key, make), material); grp.add(m); return m; };
+  if (type === 1) {                                    // 茶: 上の段に茶筒、下の段に茶葉の袋
+    mesh("sh_cans", () => mergeParts(slots(1).map(([x, y, z, n]) => ({ geo: new THREE.CylinderGeometry(1, 1, 1, 28), m: mat(x, y + CAN_H[n] / 2, z, 0.055, CAN_H[n], 0.055, 0, n * 2.1, 0), color: 0xffffff }))),
+      lit(std(texOf(C.teaLabel), { roughness: 0.45 }), 0.2));
+    mesh("sh_canlids", () => mergeParts(slots(1).map(([x, y, z, n]) => ({ geo: lathe([[0.001, 0], [1, 0], [1.01, 0.64], [0.94, 0.72], [0.001, 0.72]], 28), m: mat(x, y + CAN_H[n] - 0.03, z, 0.0575, 0.0575, 0.0575), color: 0xffffff }))),
+      col(0xa79f90, { roughness: 0.35, metalness: 0.25, emissive: 0x2a2620 }));
+    [0, 1].forEach((v) => mesh("sh_bags" + v, () => { const r = rng(9 + v); return mergeParts(slots(0).filter(([, , , n]) => (n % 2) === v).flatMap(([x, y, z]) => [-0.055, 0.055].map((d) => ({
+      geo: warp(new THREE.BoxGeometry(1, 1, 1, 3, 4, 3), 61 + v, 0.05, null, 3), m: mat(x - 0.01, y + 0.08, z + d, 0.05, 0.16 + r() * 0.02, 0.1, 0, (r() - 0.5) * 0.15, (r() - 0.5) * 0.04), color: 0xffffff })))); },
+      lit(std(texOf(C.teaBag[v]), { roughness: 0.85 }), 0.22)));
+  } else if (type === 2) {                             // 飴: 2段とも大きなガラス瓶に、形と色のばらばらな飴
+    const all = [...slots(0), ...slots(1)];
+    mesh("sh_jars", () => mergeParts(all.map(([x, y, z]) => ({ geo: lathe([[0.001, 0], [0.05, 0], [0.058, 0.01], [0.06, 0.11], [0.05, 0.14], [0.036, 0.15], [0.036, 0.162]], 28), m: mat(x, y, z, 1.3, 1.25, 1.3), color: 0xffffff }))),
+      new THREE.MeshStandardMaterial({ color: 0xdcecf0, roughness: 0.05, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide }));
+    mesh("sh_candies", () => { const r = rng(21), cols = [0xc8781e, 0xe23c30, 0xf2c13c, 0x6fbf62, 0xf4f1ea, 0xd98a2a, 0x9a5ad0]; const parts = [];
+      all.forEach(([x, y, z], j) => { for (let n = 0; n < 22; n++) { const a = r() * 6.28, d = Math.sqrt(r()) * 0.058, s = 0.013 + r() * 0.008;
+        parts.push({ geo: warp(new THREE.SphereGeometry(1, 8, 6), 700 + n, 0.25), m: mat(x + Math.cos(a) * d, y + 0.012 + Math.floor(n / 7) * 0.03 + r() * 0.012, z + Math.sin(a) * d, s * 1.3, s * 0.8, s, r() * 6, r() * 6, r() * 6), color: jitter(cols[(n + j) % cols.length], r, 0.08) }); } });
+      return mergeParts(parts); }, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.18, emissive: 0x4a2a14, emissiveIntensity: 0.35 }));
+    mesh("sh_jarlids", () => mergeParts(all.map(([x, y, z]) => ({ geo: lathe([[0.001, 0], [0.04, 0], [0.041, 0.022], [0.035, 0.026], [0.001, 0.026]], 28), m: mat(x, y + 0.198, z, 1.3, 1.25, 1.3), color: 0xffffff }))),
+      lit(std(texOf(C.timber, 1, 1), { roughness: 0.5, color: 0xd9a670 }), 0.2));
+  } else {                                             // もち・団子: 包み紙をかけた折箱を2段に重ねる（上の箱は少しずらす）
+    mesh("sh_boxes" + type, () => { const r = rng(31 + type); return mergeParts([...slots(0), ...slots(1)].flatMap(([x, y, z]) => [0, 1].map((k) => {
+      const hgt = 0.065 + r() * 0.01; return { geo: warp(new THREE.BoxGeometry(1, 1, 1, 2, 2, 2), 81 + k, 0.03, null, 3),
+        m: mat(x - 0.005 + (r() - 0.5) * 0.01, y + hgt / 2 + k * 0.072, z + (r() - 0.5) * 0.02, 0.15, hgt, 0.2, 0, (r() - 0.5) * (k ? 0.25 : 0.08), 0), color: 0xffffff }; }))); },
+      lit(std(texOf(C.wrap[type === 3 ? 3 : 0]), { roughness: 0.8 }), 0.22));
   }
   return grp;
 }
@@ -774,6 +972,7 @@ function buildHall(signNum) {
     const shopTex = texOf(C.shop[i % 4]);
     shop.backMat = new THREE.MeshStandardMaterial({ map: shopTex, emissiveMap: shopTex, emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.9 });
     g.add(plane(wB, WALL_H, shop.backMat, back, WALL_H / 2, z, Math.PI / 2));
+    shop.shelf = shelfGoods(g, i % 4, back, z);
     g.add(plane(1.1, wB, std(texOf(C.wood, 0.55, 1.2), { roughness: 0.7, color: 0x8a6a50 }), -W2 - 0.55, 0.004, z, 0, -Math.PI / 2));   // お店の床
     [z - wB / 2, z + wB / 2].forEach((zz, k) => g.add(plane(1.1, WALL_H, std(texOf(C.wood, 0.55, 1.4), { roughness: 0.7, color: 0x9a7458 }), -W2 - 0.55, WALL_H / 2, zz, k ? Math.PI : 0)));
     g.add(plane(1.1, wB, std(texOf(C.plank, 0.55, 1.3), { roughness: 0.8 }), -W2 - 0.55, WALL_H - 0.3, z, 0, Math.PI / 2));             // お店の天井
@@ -1156,6 +1355,7 @@ window.__exit3d = {
   breakRender: () => { renderer.render = () => { throw new Error("test"); }; },   // 例外が出てもゲームが止まらないことの検証用
   startGame, debugState: () => ({ pr: Quality.pr, fps: Quality.fps, phase: G.phase, exitNo: G.exitNo, round: G.round, anomaly: G.anomaly && G.anomaly.id, final: !!G.final, x: P.x, z: P.z, yaw: P.yaw }),
   forceAnomaly: (id) => { G.forced = id; },
+  setPitch: (p) => { P.pitch = p; },                // 見た目の確認用（売り台の商品を見下ろす）
   teleport: (z, x = 0) => { P.z = z; P.x = x; },
   setYaw: (y) => { P.yaw = y; },
   mouseLook: (x, y) => mouseLook(x, y),             // ポインターロック無しでマウスの移動量を流す（外れ値除去・ならしの検証用）
