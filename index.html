@@ -261,7 +261,9 @@ function tuneQuality(dt) {
   if (fps < 45) { next = Math.max(Quality.min, Quality.pr * 0.85); Quality.hold = 20; Quality.good = 0; }
   else if (fps > 56) { Quality.good = (Quality.good || 0) + 1; if (Quality.hold === 0 && Quality.good >= 3) { next = Math.min(Quality.max, Quality.pr + 0.15); Quality.good = 0; } }
   else Quality.good = 0;
-  if (Math.abs(next - Quality.pr) > 0.01) { Quality.pr = next; resize(); }
+  // ここで resize() すると、描いた直後に描画バッファが空になり、その1コマが空白で表示されて画面がチカッとする。
+  // 倍率だけ変えておき、実際の作り直しは次のコマの描画の前に行う（frame の先頭）
+  if (Math.abs(next - Quality.pr) > 0.01) { Quality.pr = next; Quality.dirty = true; }
 }
 
 // 商店街（アーケード）の寸法。左にお店・右に壁、柱と梁は BAY ごと
@@ -1098,11 +1100,11 @@ function loop(now, id) {
 }
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  let fx = 0, fy = 0;                                    // fx: 右+ / fy: 前+
+  if (Quality.dirty) { Quality.dirty = false; resize(); }
+  let fx = 0, fy = 0;                                   // fx: 右+ / fy: 前+
   if (keys.has("KeyW") || keys.has("ArrowUp")) fy += 1; if (keys.has("KeyS") || keys.has("ArrowDown")) fy -= 1;
-  if (keys.has("KeyD")) fx += 1; if (keys.has("KeyA")) fx -= 1;
+  if (keys.has("KeyD") || keys.has("ArrowRight")) fx += 1; if (keys.has("KeyA") || keys.has("ArrowLeft")) fx -= 1;
   applyMouse(dt);
-  if (keys.has("ArrowLeft")) P.yaw += 1.8 * dt; if (keys.has("ArrowRight")) P.yaw -= 1.8 * dt;
   fx += touch.vx; fy -= touch.vy;
   const mag = Math.hypot(fx, fy); if (mag > 1) { fx /= mag; fy /= mag; }
   const speed = 2.3;
