@@ -968,7 +968,7 @@ function startGame() {
   $("hint").textContent = $("hint").dataset.t;
   const gd = $("guide"); gd.classList.remove("off"); gd.classList.toggle("on", matchMedia("(pointer:coarse)").matches);   // スマホだけ操作ガイドを出す（歩き出したら消える）
   toast("いつもの通路を覚えよう", 3200);
-  G.running = true; last = performance.now(); requestAnimationFrame(loop);
+  G.running = true; last = performance.now(); const id = ++loopGen; requestAnimationFrame(t => loop(t, id));
 }
 function nextScene() {
   const final = G.exitNo >= 8;
@@ -1090,8 +1090,13 @@ function applyMouse(dt) {
 
 /* ===== 8. メインループ ===== */
 let last = 0;
-function loop(now) {
-  if (!G.running) return;
+let loopErrors = 0, loopGen = 0;
+function loop(now, id) {
+  if (!G.running || id !== loopGen) return;               // 始め直す前の古いループは、ここで止まる（2本動いて2倍重くなるのを防ぐ）
+  requestAnimationFrame(t => loop(t, id));                           // 先に次のコマを予約する（この下で例外が出てもゲームが止まらない）
+  try { frame(now); } catch (e) { loopErrors++; if (loopErrors <= 3) console.error("loop error", e); }
+}
+function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   let fx = 0, fy = 0;                                    // fx: 右+ / fy: 前+
   if (keys.has("KeyW") || keys.has("ArrowUp")) fy += 1; if (keys.has("KeyS") || keys.has("ArrowDown")) fy -= 1;
@@ -1114,7 +1119,6 @@ function loop(now) {
   Sfx.listen(P.x, EYE, P.z, P.yaw);
   if (G.cur) renderer.render(G.cur.scene, camera);
   tuneQuality(dt);
-  requestAnimationFrame(loop);
 }
 
 /* ===== 9. UI 結線 ===== */
@@ -1135,6 +1139,8 @@ window.__exit3d = {
   anomalies: ANOMALIES.map((a) => ({ id: a.id, level: a.level, desc: a.desc })),
   store: Store, showResult, openZukan, ambient: () => Sfx.ambient, zukanView: ZUKAN_VIEW,
   info: () => ({ textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries, programs: renderer.info.programs ? renderer.info.programs.length : 0, calls: renderer.info.render.calls }),
+  loopErrors: () => loopErrors,                     // 描画ループで握りつぶした例外の件数（0 が正常）
+  breakRender: () => { renderer.render = () => { throw new Error("test"); }; },   // 例外が出てもゲームが止まらないことの検証用
   startGame, debugState: () => ({ pr: Quality.pr, fps: Quality.fps, phase: G.phase, exitNo: G.exitNo, round: G.round, anomaly: G.anomaly && G.anomaly.id, final: !!G.final, x: P.x, z: P.z, yaw: P.yaw }),
   forceAnomaly: (id) => { G.forced = id; },
   teleport: (z, x = 0) => { P.z = z; P.x = x; },
