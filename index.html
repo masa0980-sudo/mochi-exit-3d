@@ -33,6 +33,7 @@ canvas#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
 #toast.show{visibility:visible}
 #vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 50%,#0000 55%,#0a050256 100%)}
 #fade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .22s}
+#glow{position:absolute;inset:0;opacity:0;pointer-events:none;background:radial-gradient(ellipse at 50% 42%,#fffdf2 0%,#fff6dc 45%,#ffe9b8 100%)}
 #stick{position:absolute;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;border:2px solid #fff5;background:#fff1;display:none;pointer-events:none}
 #knob{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;background:#fff8}
 #hint{position:absolute;bottom:max(14px,env(safe-area-inset-bottom));left:0;right:0;text-align:center;font-size:13px;color:#ffe3bd;opacity:.75;text-shadow:0 1px 4px #000;pointer-events:none;display:none}
@@ -85,6 +86,7 @@ canvas#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
     <button class="btn sub" id="zukanBtn">見つけた異変</button>
   </div>
   <div id="fade"></div>
+  <div id="glow"></div>
   <div id="modal"><div class="card">
     <b>あそびかた</b><br>
     ・同じ通路を歩いて、<b>「いつもの通路」と違う所（異変）</b>を探します。<br>
@@ -1236,6 +1238,7 @@ function fadeThen(fn) { const f = $("fade"); f.style.opacity = 1; setTimeout(() 
 function setExit(n) { G.exitNo = n; $("exitNo").textContent = n; }
 
 function startGame() {
+  G.ending = null; $("glow").style.transition = "none"; $("glow").style.opacity = 0;
   Sfx.ensure(); Sfx.startAmbience(FURIN_POS); setExit(0); G.round = 0; G.used.clear(); G.anomaly = null; G.miss = 0; G.newFound = 0; G.t0 = 0;
   show("play"); G.phase = "intro";
   setScene(makeScene(0, null)); resetPlayer();
@@ -1257,7 +1260,7 @@ function onEnd(dir) {                         // dir: "forward" | "back"
     fadeThen(() => { if (dir === "forward") { toast("ここから判定スタート", 1400); G.t0 = performance.now(); nextScene(); } else { setScene(makeScene(0, null)); resetPlayer(); } });
     return;
   }
-  if (G.final && dir === "forward") { G.phase = "ended"; Sfx.clear(); Sfx.stopAmbience(); fadeThen(() => { G.running = false; showResult(performance.now() - G.t0); }); return; }
+  if (G.final && dir === "forward") { startEnding(performance.now() - G.t0); return; }
   const correct = G.anomaly ? dir === "back" : dir === "forward";
   G.round++;
   if (correct && G.anomaly && addFound(G.anomaly.id)) G.newFound++;
@@ -1265,6 +1268,31 @@ function onEnd(dir) {                         // dir: "forward" | "back"
   fadeThen(nextScene);
 }
 
+// クリア演出（約4秒）: 白い光に包まれる → 通路の先にもちが現れる → お辞儀 → 白く溶けて結果画面。操作はできない
+function startEnding(ms) {
+  G.phase = "ended"; Sfx.clear(); Sfx.stopAmbience();
+  const glow = $("glow"), s = G.cur;
+  glow.style.transition = "opacity .45s"; glow.style.opacity = 1;
+  setTimeout(() => {                                       // 真っ白の間に位置を移す
+    P.x = 0; P.z = 1.2; P.yaw = 0; P.pitch = -0.02;
+    s.mochi.position.set(0, 0, -1.3); s.mochi.rotation.set(0, 0, 0); s.mochi.scale.setScalar(0.001); s.mochi.visible = true;
+    G.ending = { t0: performance.now(), s };
+    glow.style.transition = "opacity 1.6s"; glow.style.opacity = 0.38;   // 光が差し込む感じに薄く残す
+  }, 480);
+  setTimeout(() => { glow.style.transition = "opacity .7s"; glow.style.opacity = 1; }, 480 + 3000);
+  setTimeout(() => {
+    G.running = false; G.ending = null; showResult(ms);
+    glow.style.transition = "opacity .9s"; glow.style.opacity = 0;
+  }, 480 + 3000 + 750);
+}
+function updateEnding(now) {
+  const e = G.ending; if (!e) return;
+  const t = (now - e.t0) / 1000, m = e.s.mochi;
+  const k = Math.max(0, Math.min(1, (t - 0.2) / 0.7)), back = 1 + 2.2 * Math.pow(k - 1, 3) + 1.2 * Math.pow(k - 1, 2);   // ぽんっと現れる（行き過ぎて戻る）
+  m.scale.setScalar(Math.max(0.001, back * k));
+  m.position.y = t > 0.9 && t < 1.5 ? Math.abs(Math.sin((t - 0.9) / 0.6 * Math.PI * 2)) * 0.12 : 0;   // 2回ぴょんぴょん
+  m.rotation.x = t > 1.7 && t < 2.6 ? Math.sin((t - 1.7) / 0.9 * Math.PI) * 0.6 : 0;                   // お辞儀
+}
 function showResult(ms) {
   const best = Store.get("best", null), isNew = !best || ms < best.timeMs;
   if (isNew) Store.set("best", { timeMs: ms, miss: G.miss });
@@ -1418,6 +1446,7 @@ function frame(now) {
     }
     a.needsUpdate = true;
   }
+  updateEnding(now);
   Sfx.listen(P.x, EYE, P.z, P.yaw);
   if (G.cur) renderer.render(G.cur.scene, camera);
   tuneQuality(dt);
@@ -1439,7 +1468,8 @@ muteBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); Sfx.ensure
 /* ===== 10. テストフック ===== */
 window.__exit3d = {
   anomalies: ANOMALIES.map((a) => ({ id: a.id, level: a.level, desc: a.desc })),
-  store: Store, showResult, openZukan, ambient: () => Sfx.ambient, zukanView: ZUKAN_VIEW,
+  endingState: () => G.ending ? { sc: G.ending.s.mochi.scale.x, y: G.ending.s.mochi.position.y, rx: G.ending.s.mochi.rotation.x, vis: G.ending.s.mochi.visible, glow: +getComputedStyle($("glow")).opacity } : null,
+  store: Store, showResult, startEnding, openZukan, ambient: () => Sfx.ambient, zukanView: ZUKAN_VIEW,
   info: () => ({ textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries, programs: renderer.info.programs ? renderer.info.programs.length : 0, calls: renderer.info.render.calls }),
   loopErrors: () => loopErrors,                     // 描画ループで握りつぶした例外の件数（0 が正常）
   breakRender: () => { renderer.render = () => { throw new Error("test"); }; },   // 例外が出てもゲームが止まらないことの検証用
