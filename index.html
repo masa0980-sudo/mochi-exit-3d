@@ -1269,11 +1269,21 @@ function showResult(ms) {
   const best = Store.get("best", null), isNew = !best || ms < best.timeMs;
   if (isNew) Store.set("best", { timeMs: ms, miss: G.miss });
   const b = isNew ? { timeMs: ms, miss: G.miss } : best, found = Store.get("found", []).length;
+  // プレイ履歴: 直近30回を保存（新しい順）。今回の順位はこの履歴の中でのタイム順
+  const hist = Store.get("history", []);
+  hist.unshift({ at: Date.now(), timeMs: Math.round(ms), miss: G.miss, found: G.newFound });
+  hist.length = Math.min(hist.length, 30);
+  Store.set("history", hist);
+  const rank = hist.filter((h) => h.timeMs < Math.round(ms)).length + 1;
+  const fmtAt = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const rows = hist.slice(0, 5).map((h, i) => `<div>${i === 0 ? "今回" : fmtAt(h.at)}　${fmtTime(h.timeMs)}　ミス ${h.miss}</div>`).join("");
   $("resultInfo").innerHTML =
     `タイム <b>${fmtTime(ms)}</b>${isNew ? '<span class="new">自己ベスト更新！</span>' : ""}<br>` +
     `ミス <b>${G.miss}</b> 回<br>` +
     `<small>自己ベスト ${fmtTime(b.timeMs)}（ミス ${b.miss}）</small><br>` +
-    `見つけた異変 <b>${found}</b> / ${ANOMALIES.length}${G.newFound ? `　<small>今回 +${G.newFound}</small>` : ""}`;
+    `見つけた異変 <b>${found}</b> / ${ANOMALIES.length}${G.newFound ? `　<small>今回 +${G.newFound}</small>` : ""}` +
+    `<br><small>記録${hist.length}回中 ${rank}位</small>` +
+    `<div style="margin-top:8px;font-size:.8em;opacity:.8;line-height:1.5">${rows}</div>`;
   show("result");
 }
 // 図鑑: 見つけた異変は、その場面の画像と説明を出す。未発見は「？？？」と難しさの●だけ（答えを先に教えない）
