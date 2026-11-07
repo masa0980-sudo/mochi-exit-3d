@@ -31,6 +31,7 @@ canvas#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
 #play.active #muteBtn{display:block}
 #toast{white-space:nowrap;position:absolute;left:50%;top:36%;transform:translateX(-50%);width:max-content;max-width:94vw;text-align:center;font-size:clamp(18px,5.6vw,32px);font-weight:900;text-shadow:0 2px 6px #000;background:#000b;border-radius:999px;padding:8px 22px;visibility:hidden;pointer-events:none}
 #toast.show{visibility:visible}
+#vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 50%,#0000 55%,#0a050256 100%)}
 #fade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .22s}
 #stick{position:absolute;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;border:2px solid #fff5;background:#fff1;display:none;pointer-events:none}
 #knob{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;background:#fff8}
@@ -63,6 +64,7 @@ canvas#gl{position:absolute;inset:0;width:100%;height:100%;display:block}
 <body>
 <div id="stage">
   <canvas id="gl"></canvas>
+  <div id="vig"></div>
   <div id="title" class="screen active">
     <div class="logo">もち出口<small>3D  MOCHI EXIT</small></div>
     <button class="btn" id="startBtn">はじめる</button>
@@ -306,12 +308,19 @@ function sharedCanvases() {
   // 漆喰の壁（2m 四方）
   CV.wall = canvasOf(1024, 1024, (ctx, w, h) => {
     const r = rng(7); ctx.fillStyle = "#efe2c6"; ctx.fillRect(0, 0, w, h);
-    for (let k = 0; k < 60; k++) {
-      const x = r() * w, y = r() * h, rad = 60 + r() * 160, g = ctx.createRadialGradient(x, y, 0, x, y, rad), d = r() < 0.5;
-      g.addColorStop(0, d ? "rgba(185,160,120,0.12)" : "rgba(255,250,238,0.12)"); g.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = g; ctx.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    // 繰り返して並べたとき継ぎ目が見えないよう、染みは端をまたぐ分も反対側に描く（2026-11-07 壁の継ぎ目が目立った）
+    const stain = (x, y, rad, c) => { const g = ctx.createRadialGradient(x, y, 0, x, y, rad); g.addColorStop(0, c); g.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = g; for (const ox of [-w, 0, w]) for (const oy of [-h, 0, h]) { ctx.save(); ctx.translate(ox, oy); ctx.fillRect(x - rad, y - rad, rad * 2, rad * 2); ctx.restore(); } };
+    for (let k = 0; k < 70; k++) stain(r() * w, r() * h, 50 + r() * 170, r() < 0.5 ? "rgba(185,160,120,0.12)" : "rgba(255,250,238,0.12)");
+    // 左官のこて跡: 短い弧を重ねたような淡い筋
+    for (let k = 0; k < 90; k++) {
+      const x = r() * w, y = r() * h, rad = 30 + r() * 70, a0 = r() * 6.28;
+      ctx.strokeStyle = r() < 0.5 ? "rgba(120,95,60,0.07)" : "rgba(255,252,240,0.09)"; ctx.lineWidth = 2 + r() * 5;
+      for (const ox of [-w, 0, w]) for (const oy of [-h, 0, h]) { ctx.beginPath(); ctx.arc(x + ox, y + oy, rad, a0, a0 + 0.8 + r() * 0.8); ctx.stroke(); }
     }
-    speckle(ctx, w, h, r, 14000, 0.10, 120, 120);
+    speckle(ctx, w, h, r, 26000, 0.12, 110, 130);
+    // 髪の毛ほどのひび
+    ctx.strokeStyle = "rgba(90,70,45,0.18)"; ctx.lineWidth = 1;
+    for (let k = 0; k < 6; k++) { let x = r() * w, y = r() * h; ctx.beginPath(); ctx.moveTo(x, y); for (let n = 0; n < 14; n++) { x += (r() - 0.5) * 22; y += 6 + r() * 14; ctx.lineTo(x, y); } ctx.stroke(); }
   });
   // 縦張りの板（2m × 1m）: 腰板・扉・お店の奥
   CV.wood = canvasOf(1024, 512, (ctx, w, h) => {
@@ -396,6 +405,17 @@ function sharedCanvases() {
   });
   // 隅の陰
   CV.shade = canvasOf(8, 256, (ctx, w, h) => { const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "rgba(30,15,5,0.42)"); g.addColorStop(1, "rgba(30,15,5,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h); });
+  // 灯りのにじみ（提灯・吊り下げ灯のまわりの光。加算で重ねる）と、置いた物の足もとの影
+  CV.halo = canvasOf(128, 128, (ctx, w) => {
+    const g = ctx.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+    g.addColorStop(0, "rgba(255,255,255,0.9)"); g.addColorStop(0.18, "rgba(255,255,255,0.45)"); g.addColorStop(0.5, "rgba(255,255,255,0.12)"); g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, w);
+  });
+  CV.blob = canvasOf(128, 128, (ctx, w) => {
+    const g = ctx.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+    g.addColorStop(0, "rgba(10,5,2,0.6)"); g.addColorStop(0.6, "rgba(10,5,2,0.28)"); g.addColorStop(1, "rgba(10,5,2,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, w);
+  });
   // 提灯（橙の和紙・竹の骨・上下の黒い輪・「もち」）
   CV.lantern = canvasOf(512, 256, (ctx, w, h) => {
     const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#d2541e"); g.addColorStop(0.5, "#ffa04a"); g.addColorStop(1, "#d2541e");
@@ -683,7 +703,13 @@ function signCanvas(text) {                         // 出口サイン: 緑地�
 }
 
 /* ===== 4. 通路の組み立て（異変は apply(s) が s の部品を書き換えるだけ） ===== */
-function std(map, extra) { return new THREE.MeshStandardMaterial(Object.assign({ map, roughness: 0.75, metalness: 0 }, extra || {})); }
+// bump を渡すと、同じ画像を凹凸（バンプ）にも使う。画像は増えず、目地・木目・漆喰のざらつきに陰ができる
+function std(map, extra) {
+  const o = Object.assign({ map, roughness: 0.75, metalness: 0 }, extra || {});
+  if (o.bump) { o.bumpMap = map; o.bumpScale = o.bump; }
+  delete o.bump;
+  return new THREE.MeshStandardMaterial(o);
+}
 // 単色の物にも「むら」を掛ける（塗りつぶしに見えないように。画素ごとの手間はテクスチャ1枚ぶんで軽い）
 function col(color, extra) { return new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.7, map: texOf(sharedCanvases().mottle, 1, 1) }, extra || {})); }
 const GEO_CACHE = new Map();                       // 同じ寸法の箱・板は形状を1つだけ作って使い回す
@@ -920,36 +946,45 @@ function buildHall(signNum) {
   const scene = s.scene; scene.background = new THREE.Color(0x1c1410); scene.fog = new THREE.Fog(0x2a1f1a, 10, 30);
   scene.add(s.group);
   const g = s.group, W2 = HALL_W / 2, L2 = HALL_L / 2;
-  const timberZ = std(texOf(C.timber, 1, 3), { roughness: 0.6 });                 // 縦に長い材（柱）
-  const timberX = std(texOf(C.timber, 1, 2), { roughness: 0.6, color: 0xc8b8a8 }); // 梁など
+  const timberZ = std(texOf(C.timber, 1, 3), { roughness: 0.6, bump: 1.4 });                 // 縦に長い材（柱）
+  const timberX = std(texOf(C.timber, 1, 2), { roughness: 0.6, color: 0xc8b8a8, bump: 1.4 }); // 梁など
   const dark = col(0x2a1a10, { roughness: 0.6 });
 
   const EXT = 4 * BAY, LL = HALL_L + 2 * EXT, FADE_N = 8, FADE_COL = 0x1c1410;   // 両端の先へ伸ばす長さ・暗幕の枚数と色
   // 石畳
-  g.add(plane(HALL_W, LL, std(texOf(C.stone, HALL_W / 2, LL / 2), { roughness: 0.55 }), 0, 0, 0, 0, -Math.PI / 2));
+  g.add(plane(HALL_W, LL, std(texOf(C.stone, HALL_W / 2, LL / 2), { roughness: 0.55, bump: 2.5 }), 0, 0, 0, 0, -Math.PI / 2));
   // 切妻屋根（野地板）・棟木・母屋
   const slope = Math.atan2(RIDGE_H - EAVE_H, W2), rl = Math.hypot(W2, RIDGE_H - EAVE_H) + 0.05;
   [-1, 1].forEach((sg) => {
-    const roof = plane(rl, LL, std(texOf(C.plank, rl / 2, LL / 2), { roughness: 0.8, side: THREE.DoubleSide }), sg * W2 / 2, (EAVE_H + RIDGE_H) / 2, 0, 0, 0);
+    const roof = plane(rl, LL, std(texOf(C.plank, rl / 2, LL / 2), { roughness: 0.8, side: THREE.DoubleSide, bump: 2 }), sg * W2 / 2, (EAVE_H + RIDGE_H) / 2, 0, 0, 0);
     roof.rotation.order = "ZXY"; roof.rotation.set(Math.PI / 2, 0, -sg * slope);   // 水平に寝かせてから、棟から軒へ下がるよう傾ける
     g.add(roof);
     g.add(box(0.12, 0.14, LL, timberX, sg * W2 * 0.5, EAVE_H + (RIDGE_H - EAVE_H) * 0.5 - 0.1, 0));    // 母屋
   });
   g.add(box(0.16, 0.18, LL, timberX, 0, RIDGE_H - 0.1, 0));                                           // 棟木
   // 柱・梁・束（BAY ごと）
+  const pillarAt = [];
   for (let z = L2 + EXT; z >= -L2 - EXT - 0.01; z -= BAY) {
     [-W2 + 0.09, W2 - 0.09].forEach((x) => g.add(box(0.18, EAVE_H, 0.18, timberZ, x, EAVE_H / 2, z)));
     g.add(box(HALL_W, 0.22, 0.16, timberX, 0, EAVE_H - 0.1, z));                                            // 梁
     g.add(box(0.12, RIDGE_H - EAVE_H, 0.12, timberX, 0, (EAVE_H + RIDGE_H) / 2, z));                        // 束
     [-1, 1].forEach((sg) => { const b = box(0.08, Math.hypot(W2 * 0.5, RIDGE_H - EAVE_H), 0.08, timberX, sg * W2 * 0.25, (EAVE_H + RIDGE_H) / 2 - 0.05, z); b.rotation.z = sg * Math.atan2(W2 * 0.5, RIDGE_H - EAVE_H); g.add(b); });
+    pillarAt.push([-W2 + 0.09, z], [W2 - 0.09, z]);
+  }
+  // 柱の足もと: 礎石（自然石の丸い土台）。全部1回の描画で出す（InstancedMesh）。柱が床にめり込んで見えるのを防ぐ
+  {
+    const sozeki = shapeOf("sozeki", () => warp(lathe([[0, 0], [0.2, 0], [0.19, 0.035], [0.15, 0.085], [0.11, 0.1], [0, 0.1]], 18), 61, 0.07, null, 5));
+    const im = new THREE.InstancedMesh(sozeki, std(texOf(C.stone, 0.4, 0.4), { roughness: 0.65, color: 0x9a9286, bump: 2.5 }), pillarAt.length), r = rng(5);
+    pillarAt.forEach(([x, z], k) => { im.setMatrixAt(k, mat(x, 0.0, z, 0.8 + r() * 0.12, 0.9 + r() * 0.3, 0.8 + r() * 0.12, 0, r() * 6.28, 0)); });
+    g.add(im);
   }
   // 高窓（左右・壁の上から軒まで）
   const skyMat = new THREE.MeshBasicMaterial({ map: texOf(C.sky, LL / 4, 1), fog: false }); s.skyMat = skyMat;
   [[-W2 + 0.01, Math.PI / 2], [W2 - 0.01, -Math.PI / 2]].forEach(([x, ry]) => g.add(plane(LL, EAVE_H - WALL_H - 0.12, skyMat, x, (WALL_H + EAVE_H - 0.12) / 2, 0, ry)));
 
   // 右側: 漆喰の壁＋腰板＋巾木
-  s.wallR = plane(LL, WALL_H, std(texOf(C.wall, LL / 2, WALL_H / 2), { roughness: 0.85 }), W2 - 0.005, WALL_H / 2, 0, -Math.PI / 2); g.add(s.wallR);
-  g.add(plane(LL, 0.9, std(texOf(C.wood, LL / 2, 0.9), { roughness: 0.55 }), W2 - 0.012, 0.45, 0, -Math.PI / 2));
+  s.wallR = plane(LL, WALL_H, std(texOf(C.wall, LL / 2, WALL_H / 2), { roughness: 0.85, bump: 1.6 }), W2 - 0.005, WALL_H / 2, 0, -Math.PI / 2); g.add(s.wallR);
+  g.add(plane(LL, 0.9, std(texOf(C.wood, LL / 2, 0.9), { roughness: 0.55, bump: 1.6 }), W2 - 0.012, 0.45, 0, -Math.PI / 2));
   g.add(box(0.04, 0.05, LL, dark, W2 - 0.02, 0.92, 0), box(0.03, 0.09, LL, dark, W2 - 0.02, 0.045, 0), box(0.06, 0.1, LL, timberX, W2 - 0.03, WALL_H, 0));
   const shadeMat = new THREE.MeshBasicMaterial({ map: texOf(C.shade), transparent: true, depthWrite: false });
   g.add(plane(LL, 0.5, shadeMat, W2 - 0.02, WALL_H - 0.25, 0, -Math.PI / 2));
@@ -1002,7 +1037,7 @@ function buildHall(signNum) {
     // 板の向き: 横（u）が通路に沿い、縦（v）が軒先へ下がる。上面は瓦・下面は木の軒裏
     const tilt = 0.42, depth = 0.8, ex = -W2 + Math.cos(tilt) * depth / 2, ey = WALL_H + 0.12 - Math.sin(tilt) * depth / 2;
     const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(-Math.cos(tilt), Math.sin(tilt), 0), new THREE.Vector3(Math.sin(tilt), Math.cos(tilt), 0));
-    const eave = plane(BAY, depth, std(texOf(C.kawara, BAY / 0.3, 1.6), { roughness: 0.45 }), ex, ey, z); eave.quaternion.setFromRotationMatrix(basis); g.add(eave);
+    const eave = plane(BAY, depth, std(texOf(C.kawara, BAY / 0.3, 1.6), { roughness: 0.45, bump: 3 }), ex, ey, z); eave.quaternion.setFromRotationMatrix(basis); g.add(eave);
     const soffit = plane(BAY, depth, std(texOf(C.plank, BAY / 2, 0.4), { roughness: 0.8, side: THREE.BackSide }), ex, ey - 0.012, z); soffit.quaternion.copy(eave.quaternion); g.add(soffit);
     const edge = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, BAY, 12), col(0x3a414c, { roughness: 0.35 }));   // 軒先の瓦の縁
     edge.rotation.x = Math.PI / 2; edge.position.set(-W2 + Math.cos(tilt) * depth, WALL_H + 0.12 - Math.sin(tilt) * depth, z); g.add(edge);
@@ -1016,6 +1051,11 @@ function buildHall(signNum) {
     const pivot = new THREE.Group(); pivot.position.set(W2 - 0.03, 1.6, z); pivot.rotation.y = -Math.PI / 2;
     pivot.add(box(0.8, 1.15, 0.04, col(0x4a2c18, { roughness: 0.45 }), 0, 0, -0.005));
     pivot.add(plane(0.7, 1.05, std(texOf(C.posters[i]), { roughness: 0.32 }), 0, 0, 0.018));
+    // 画びょうの代わりの養生テープ（上の両角・少し斜めに半透明）。ポスターの絵は children[1] のまま（異変が参照する）
+    pivot.add(new THREE.Mesh(shapeOf("tape", () => mergeParts([
+      { geo: new THREE.BoxGeometry(0.1, 0.035, 0.004), m: mat(-0.315, 0.5, 0.02, 1, 1, 1, 0, 0, 0.5), color: 0xe9dfc2 },
+      { geo: new THREE.BoxGeometry(0.1, 0.035, 0.004), m: mat(0.315, 0.5, 0.02, 1, 1, 1, 0, 0, -0.45), color: 0xe9dfc2 },
+    ])), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, transparent: true, opacity: 0.8 })));
     g.add(pivot); s.posters.push(pivot);
   });
   // 扉（右の壁・枠＋鏡板＋真鍮の取っ手。蝶番で回る）
@@ -1025,16 +1065,24 @@ function buildHall(signNum) {
     const hinge = new THREE.Group(); hinge.position.set(W2 - 0.08, 0, z + 0.45); hinge.rotation.y = Math.PI;
     hinge.add(box(0.05, 2.1, 0.9, std(texOf(C.wood, 0.5, 2.2), { roughness: 0.45, color: 0xd08a5e }), 0, 1.05, 0.45));
     [0.62, 1.5].forEach((y) => hinge.add(box(0.02, 0.62, 0.62, col(0x7a3a1c, { roughness: 0.4 }), 0.03, y, 0.45)));
-    const knob = box(0.06, 0.16, 0.05, new THREE.MeshStandardMaterial({ color: 0xe8b84a, roughness: 0.3, metalness: 0.35 }), 0.04, 1.0, 0.8); hinge.add(knob); s.doorKnobs.push(knob);   // 金属感を強くすると環境の映り込みが無いので真っ黒に見える
+    // 真鍮の取っ手: 座金（四角い板）＋縦に長い握り（カプセル）＋鍵穴。金属感を強くすると環境の映り込みが無いので真っ黒に見える
+    const brass = new THREE.MeshStandardMaterial({ color: 0xe8b84a, roughness: 0.3, metalness: 0.35 }), knob = new THREE.Group(); knob.position.set(0.04, 1.0, 0.8);
+    knob.add(box(0.012, 0.2, 0.07, col(0xb8923a, { roughness: 0.35, metalness: 0.3 }), -0.006, 0, 0), new THREE.Mesh(shapeOf("handle", () => new THREE.CapsuleGeometry(0.014, 0.12, 4, 10)), brass));
+    knob.children[1].position.x = 0.022; knob.add(box(0.014, 0.03, 0.012, col(0x1a1008), -0.004, -0.13, 0));
+    hinge.add(knob); s.doorKnobs.push(knob);
     g.add(hinge); s.doors.push(hinge);
   });
 
   // 吊り下げ灯（梁から）＋点光源
-  s.lights = []; s.panels = [];
+  s.lights = []; s.panels = []; s.lampHalos = []; s.lanternHalos = [];
+  // 灯りのにじみ: 加算で重ねる光の輪（常にこちらを向く）。電球・提灯が「光っている」ように見せる
+  const haloMat = (hex, op) => new THREE.SpriteMaterial({ map: texOf(C.halo), color: hex, opacity: op, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  function halo(parent, x, y, z, size, hex, op) { const sp = new THREE.Sprite(haloMat(hex, op)); sp.position.set(x, y, z); sp.scale.set(size, size, 1); parent.add(sp); return sp; }
   [10.4, 5.2, 0, -5.2, -10.4].forEach((z) => {
     g.add(box(0.012, 0.5, 0.012, dark, 0, EAVE_H - 0.45, z));
     const shade = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.2, 20, 1, true), col(0x2a2018, { roughness: 0.5, side: THREE.DoubleSide })); shade.position.set(0, EAVE_H - 0.75, z); g.add(shade);
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), new THREE.MeshBasicMaterial({ color: 0xfff1cc })); bulb.position.set(0, EAVE_H - 0.82, z); g.add(bulb); s.panels.push(bulb);
+    s.lampHalos.push(halo(g, 0, EAVE_H - 0.84, z, 1.5, 0xffd9a0, 0.5));
     const L = new THREE.PointLight(0xffd9a0, 7, 12, 1.3); L.position.set(0, EAVE_H - 0.9, z); g.add(L); s.lights.push(L);
   });
   const shopGlow = new THREE.PointLight(0xffb070, 3, 9, 1.3); shopGlow.position.set(-W2 - 0.5, 2.0, 0); g.add(shopGlow);   // お店側のほのかな明かり
@@ -1045,8 +1093,12 @@ function buildHall(signNum) {
   const lanternMat = new THREE.MeshBasicMaterial({ map: texOf(C.lantern) }); s.lanternMat = lanternMat;
   function lantern(z) {
     const grp = new THREE.Group(); grp.position.set(-W2 + 0.55, WALL_H - 0.45, z);
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.2, 24, 16), lanternMat); body.scale.y = 1.25; grp.add(body);
-    grp.add(box(0.17, 0.05, 0.17, dark, 0, 0.26, 0), box(0.17, 0.05, 0.17, dark, 0, -0.26, 0), box(0.012, 0.2, 0.012, dark, 0, 0.38, 0));
+    // 骨の入った提灯: 竹ひごの段（ふくらみ）が縦に並ぶ。まん丸の玉ではなく、上下がすぼまった樽形
+    const ribbed = shapeOf("lantern", () => lathe(Array.from({ length: 41 }, (_, k) => { const t = k / 40, base = Math.sin(Math.PI * (0.06 + 0.88 * t)) * 0.2 + 0.035; return [base * (1 + 0.035 * Math.cos(t * Math.PI * 2 * 9)), (t - 0.5) * 0.5]; }), 28));
+    const body = new THREE.Mesh(ribbed, lanternMat); grp.add(body);
+    grp.add(box(0.15, 0.05, 0.15, dark, 0, 0.26, 0), box(0.15, 0.05, 0.15, dark, 0, -0.26, 0), box(0.012, 0.2, 0.012, dark, 0, 0.38, 0));
+    grp.add(box(0.012, 0.16, 0.012, dark, 0, -0.35, 0));                                         // 下の房をつるす糸
+    s.lanternHalos.push(halo(grp, 0, 0, 0, 1.0, 0xff9a4a, 0.42));
     g.add(grp); return grp;
   }
   s.lanterns.push(lantern(BAYS[2]), lantern(BAYS[4]), lantern(BAYS[7]));
@@ -1055,8 +1107,19 @@ function buildHall(signNum) {
 
   // もち（普段は不在）
   s.mochi = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 32, 24), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 })); body.scale.y = 0.85; body.position.y = 0.3; s.mochi.add(body);
-  s.mochi.add(box(0.05, 0.09, 0.02, col(0x222222), -0.1, 0.38, 0.31), box(0.05, 0.09, 0.02, col(0x222222), 0.1, 0.38, 0.31), box(0.1, 0.03, 0.02, col(0xd44444), 0, 0.27, 0.32));
+  // 搗きたてのお餅: ゆがんだ丸み・底は平ら・打ち粉のむら。顔はひとまとめ（目に光の点、ほおの赤み、小さな口）
+  {
+    const mb = new THREE.Mesh(shapeOf("mochiBody", () => warp(new THREE.SphereGeometry(0.34, 40, 28), 91, 0.06, 0.26, 2.2)), std(texOf(C.powder, 1, 1), { roughness: 0.5, color: 0xfffaf0, emissive: 0x2a2018 }));
+    mb.scale.y = 0.85; mb.position.y = 0.3; s.mochi.add(mb);
+    const face = shapeOf("mochiFace", () => mergeParts([
+      { geo: UNIT_BALL(), m: mat(-0.105, 0.385, 0.3, 0.032, 0.045, 0.02), color: 0x1a1210 }, { geo: UNIT_BALL(), m: mat(0.105, 0.385, 0.3, 0.032, 0.045, 0.02), color: 0x1a1210 },
+      { geo: UNIT_BALL(), m: mat(-0.1, 0.4, 0.318, 0.011, 0.011, 0.008), color: 0xffffff }, { geo: UNIT_BALL(), m: mat(0.11, 0.4, 0.318, 0.011, 0.011, 0.008), color: 0xffffff },
+      { geo: UNIT_BALL(), m: mat(-0.19, 0.3, 0.27, 0.055, 0.032, 0.012), color: 0xf6a6b0 }, { geo: UNIT_BALL(), m: mat(0.19, 0.3, 0.27, 0.055, 0.032, 0.012), color: 0xf6a6b0 },
+      { geo: new THREE.TorusGeometry(0.03, 0.006, 6, 14, Math.PI), m: mat(0, 0.325, 0.318, 1, 1, 1, 0, 0, Math.PI), color: 0x7a3a34 },
+    ]));
+    s.mochi.add(new THREE.Mesh(face, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3 })));
+    const sh = plane(1.1, 1.1, new THREE.MeshBasicMaterial({ map: texOf(C.blob), transparent: true, depthWrite: false }), 0, 0.004, 0, 0, -Math.PI / 2); s.mochi.add(sh);   // 足もとの影
+  }
   s.mochi.position.set(0.9, 0, -6.5); s.mochi.visible = false; g.add(s.mochi);
   s.mochi2 = s.mochi.clone(); s.mochi2.position.set(-0.8, 0, -2.6); s.mochi2.rotation.y = 0.5; s.mochi2.visible = false; g.add(s.mochi2);
   // 異変用に普段は隠しておく物: 水たまり・通路の真ん中の樽・余分な柱・色違いの石（石は石畳の目地にぴったり合う位置）
@@ -1068,6 +1131,14 @@ function buildHall(signNum) {
   s.barrel.position.set(-0.35, 0, -4.6); s.barrel.visible = false; g.add(s.barrel);
   s.extraPillar = box(0.18, EAVE_H, 0.18, timberZ, W2 - 0.09, EAVE_H / 2, BAYS[3]); s.extraPillar.visible = false; g.add(s.extraPillar);
   s.oddStone = plane(0.98, 0.48, std(texOf(C.stone, 0.49, 0.24), { roughness: 0.55, color: 0x9c8c78 }), 0, 0.003, 4.15, 0, -Math.PI / 2); s.oddStone.visible = false; g.add(s.oddStone);
+  // 舞う埃: 灯りの下でゆっくり漂う細かい粒（1回の描画・毎コマの更新は粒の数だけ）。空気に厚みが出る
+  {
+    const N = 140, r = rng(3), pos = new Float32Array(N * 3), seed = new Float32Array(N * 3);
+    for (let k = 0; k < N; k++) { pos[k * 3] = (r() - 0.5) * (HALL_W - 0.3); pos[k * 3 + 1] = 0.3 + r() * 2.9; pos[k * 3 + 2] = (r() - 0.5) * (HALL_L - 1); seed[k * 3] = r() * 6.28; seed[k * 3 + 1] = r() * 6.28; seed[k * 3 + 2] = 0.04 + r() * 0.08; }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos.slice(), 3));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: texOf(C.halo), size: 0.045, color: 0xffe6c0, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+    pts.frustumCulled = false; g.add(pts); s.dust = { pts, base: pos, seed };
+  }
   s.furinSilent = false; s.noEcho = false;   // 音の異変（Sfx が見る）
 
   // 出口サイン（梁から吊る・前後から読める）
@@ -1086,14 +1157,14 @@ function buildHall(signNum) {
 const ANOMALIES = [
   // ●○○ わかりやすい
   { id: "mochi_in_hall",   level: 1, desc: "通路にもちが立っていた",           apply: (s) => { s.mochi.visible = true; } },
-  { id: "light_dead",      level: 1, desc: "吊り下げ灯が1つ消えていた",         apply: (s) => { s.panels[2].material.color.set(0x222222); s.lights[2].intensity = 0; s.lights[1].intensity = 3; s.lights[3].intensity = 3; } },
+  { id: "light_dead",      level: 1, desc: "吊り下げ灯が1つ消えていた",         apply: (s) => { s.panels[2].material.color.set(0x222222); s.lampHalos[2].visible = false; s.lights[2].intensity = 0; s.lights[1].intensity = 3; s.lights[3].intensity = 3; } },
   { id: "door_open",       level: 1, desc: "扉が開いていた",                   apply: (s) => { s.doors[0].rotation.y = Math.PI + 1.25; } },
   { id: "noren_gone",      level: 1, desc: "のれんが全部はずされていた",       apply: (s) => { s.shops.forEach((sh) => { sh.noren.forEach((m) => { m.visible = false; }); sh.pole.visible = false; }); } },
   { id: "counter_gone",    level: 1, desc: "団子屋の売り台がなくなっていた",   apply: (s) => { s.shops[3].counter.visible = false; } },
   { id: "puddle",          level: 1, desc: "通路に水たまりがあった",           apply: (s) => { s.puddle.visible = true; } },
   { id: "barrel_center",   level: 1, desc: "通路の真ん中に樽が置かれていた",   apply: (s) => { s.barrel.visible = true; } },
   { id: "two_mochi",       level: 1, desc: "もちが2匹いた",                    apply: (s) => { s.mochi.visible = true; s.mochi2.visible = true; } },
-  { id: "lanterns_red",    level: 1, desc: "提灯が全部まっ赤に灯っていた",     apply: (s) => { s.lanternMat.color.set(0xff2a2a); } },
+  { id: "lanterns_red",    level: 1, desc: "提灯が全部まっ赤に灯っていた",     apply: (s) => { s.lanternMat.color.set(0xff2a2a); s.lanternHalos.forEach((h) => h.material.color.set(0xff2a2a)); } },
   // ●●○ ふつう
   { id: "poster_gone",     level: 2, desc: "ポスターが1枚なくなっていた",       apply: (s) => { s.posters[0].visible = false; } },
   { id: "extra_lantern",   level: 2, desc: "提灯が1つ増えていた",               apply: (s) => { s.extraLantern.visible = true; } },
@@ -1115,7 +1186,7 @@ const ANOMALIES = [
   { id: "poster_price",    level: 3, desc: "だんごの本数と値段がちがっていた",         apply: (s) => { s.posters[0].children[1].material.map = texOf(sharedCanvases().posterPrice); s.posters[0].children[1].material.needsUpdate = true; } },
   { id: "no_echo",         level: 3, desc: "足音が響かなかった",                 apply: (s) => { s.noEcho = true; } },
   { id: "tanzaku_color",   level: 3, desc: "風鈴の短冊の色がちがっていた",       apply: (s) => { s.furin[0].children[3].material.color.set(0x6fc3ff); } },
-  { id: "lamp_blue",       level: 3, desc: "吊り下げ灯が1つだけ青白かった",     apply: (s) => { s.panels[1].material.color.set(0xd2e4ff); s.lights[1].color.set(0xffe6c8); } },   // 全部変える・光まで青くすると通路全体の色が変わり、一番わかりやすい異変になった（色差 66%／31%）。電球の見た目を青白く、照らす光はわずかに冷たくするだけ
+  { id: "lamp_blue",       level: 3, desc: "吊り下げ灯が1つだけ青白かった",     apply: (s) => { s.panels[1].material.color.set(0xd2e4ff); s.lampHalos[1].material.color.set(0xd2e4ff); s.lights[1].color.set(0xffe6c8); } },   // 全部変える・光まで青くすると通路全体の色が変わり、一番わかりやすい異変になった（色差 66%／31%）。電球の見た目を青白く、照らす光はわずかに冷たくするだけ
   { id: "stone_color",     level: 3, desc: "石畳の石が1枚だけ色ちがいだった",   apply: (s) => { s.oddStone.visible = true; } },
 ];
 
@@ -1138,6 +1209,7 @@ function pickAnomaly(round) {
 function disposeScene(s) {
   if (!s) return;
   s.scene.traverse((o) => {
+    if (o.isInstancedMesh) o.dispose();
     if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
     if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (m.map && !m.map.userData.shared) m.map.dispose(); m.dispose(); });
   });
@@ -1328,6 +1400,14 @@ function frame(now) {
   camera.position.set(P.x, EYE + Math.sin(P.stepAcc * 8) * 0.012, P.z);
   camera.rotation.set(P.pitch, P.yaw, 0);
   if (G.cur && G.cur.furin) G.cur.furin.forEach((f, k) => { f.rotation.x = Math.sin(now / 700 + k * 2) * 0.1; f.rotation.z = Math.sin(now / 1100 + k) * 0.06; });
+  if (G.cur && G.cur.dust) {                            // 埃をゆっくり漂わせる
+    const d = G.cur.dust, a = d.pts.geometry.attributes.position, t = now / 1000;
+    for (let k = 0; k < a.count; k++) {
+      const sx = d.seed[k * 3], sy = d.seed[k * 3 + 1], v = d.seed[k * 3 + 2];
+      a.setXYZ(k, d.base[k * 3] + Math.sin(t * v * 3 + sx) * 0.25, 0.3 + ((d.base[k * 3 + 1] - 0.3 + t * v * 0.5) % 2.9), d.base[k * 3 + 2] + Math.cos(t * v * 2.4 + sy) * 0.25);
+    }
+    a.needsUpdate = true;
+  }
   Sfx.listen(P.x, EYE, P.z, P.yaw);
   if (G.cur) renderer.render(G.cur.scene, camera);
   tuneQuality(dt);
