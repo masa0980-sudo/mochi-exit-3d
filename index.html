@@ -1133,10 +1133,10 @@ function buildHall(signNum) {
   s.oddStone = plane(0.98, 0.48, std(texOf(C.stone, 0.49, 0.24), { roughness: 0.55, color: 0x9c8c78 }), 0, 0.003, 4.15, 0, -Math.PI / 2); s.oddStone.visible = false; g.add(s.oddStone);
   // 舞う埃: 灯りの下でゆっくり漂う細かい粒（1回の描画・毎コマの更新は粒の数だけ）。空気に厚みが出る
   {
-    const N = 140, r = rng(3), pos = new Float32Array(N * 3), seed = new Float32Array(N * 3);
+    const N = 70, r = rng(3), pos = new Float32Array(N * 3), seed = new Float32Array(N * 3);
     for (let k = 0; k < N; k++) { pos[k * 3] = (r() - 0.5) * (HALL_W - 0.3); pos[k * 3 + 1] = 0.3 + r() * 2.9; pos[k * 3 + 2] = (r() - 0.5) * (HALL_L - 1); seed[k * 3] = r() * 6.28; seed[k * 3 + 1] = r() * 6.28; seed[k * 3 + 2] = 0.04 + r() * 0.08; }
     const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos.slice(), 3));
-    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: texOf(C.halo), size: 0.045, color: 0xffe6c0, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: texOf(C.halo), size: 0.045, color: 0xffe6c0, transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending }));
     pts.frustumCulled = false; g.add(pts); s.dust = { pts, base: pos, seed };
   }
   s.furinSilent = false; s.noEcho = false;   // 音の異変（Sfx が見る）
